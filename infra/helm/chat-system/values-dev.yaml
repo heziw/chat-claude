@@ -1,0 +1,87 @@
+# Dev overlay — a laptop/small dev cluster with no GPU nodes and no
+# nfs-subdir-external-provisioner/ingress-nginx installed yet.
+# Usage: helm upgrade --install chat-system ./chat-system -n chat-dev \
+#          --create-namespace -f values.yaml -f values-dev.yaml
+
+global:
+  env:
+    MOCK_LLM: "true" # no GPUs in dev -> use the deterministic mock LLM clients
+  secretEnv:
+    JWT_SECRET: "dev-only-change-me"
+
+nfs:
+  # No real NFS provisioner in dev; fall back to whatever default
+  # StorageClass the dev cluster has (e.g. local-path-provisioner on k3s/kind).
+  storageClassName: ""
+  useStaticPV: false
+  size: 20Gi
+
+gateway:
+  replicas: 1
+  ingress:
+    enabled: false
+  env:
+    GATEWAY_BASE_URL: "http://localhost:3000"
+    CLIENT_APP_URL: "http://localhost:4200"
+
+client:
+  replicas: 1
+  ingress:
+    enabled: false
+
+ingestionService:
+  replicas: 1
+  hpa:
+    enabled: false
+
+retrievalOrchestrator:
+  replicas: 1
+  hpa:
+    enabled: false
+
+structuredDataAgent:
+  replicas: 1
+  # Dev clusters typically don't have gVisor/Kata RuntimeClass installed.
+  useRuntimeClass: false
+
+summarizationService:
+  replicas: 1
+
+celeryWorkers:
+  ingestion:
+    replicas: 1
+  summarization:
+    replicas: 1
+
+# No GPU nodes in dev — rely on MOCK_LLM instead of real vLLM pods.
+vllm:
+  enabled: false
+
+postgres:
+  enabled: true
+  storage:
+    size: 5Gi
+
+milvus:
+  enabled: true
+  storage:
+    size: 10Gi
+  etcd:
+    storage:
+      size: 2Gi
+  minio:
+    storage:
+      size: 5Gi
+
+retentionSweeper:
+  schedule: "*/15 * * * *" # fast cycle for testing retention end-to-end
+  config:
+    DRY_RUN: "true"
+
+networkPolicies:
+  # Dev clusters often lack a CNI that enforces NetworkPolicy at all
+  # (e.g. plain kind/minikube with no Calico/Cilium) — keep the chart from
+  # creating policies that would otherwise silently do nothing, or worse,
+  # break things on a CNI that *does* enforce them without ingress-nginx
+  # installed in the expected namespace.
+  enabled: false

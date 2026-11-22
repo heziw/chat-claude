@@ -1,0 +1,75 @@
+{{- if .Values.milvus.enabled }}
+# Milvus standalone (single pod, embedded etcd+MinIO dependencies managed as
+# sibling StatefulSets above) — same topology as docker-compose, adequate
+# for current per-conversation-partition scale. PRODUCTION NOTE: for HA and
+# independently scalable query/data/index nodes, replace this block with the
+# Milvus Operator (https://milvus.io/docs/milvus_operator.md) or Milvus's
+# own cluster-mode Helm chart if the org already runs one — every other
+# service in this chart only ever talks to `MILVUS_HOST`/`MILVUS_PORT`
+# (see global.env), so swapping the backing implementation here doesn't
+# require touching any other template.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: milvus
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "milvus" "ctx" $) | nindent 4 }}
+spec:
+  serviceName: milvus
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "milvus" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "milvus" "ctx" $) | nindent 8 }}
+    spec:
+      containers:
+        - name: milvus
+          image: {{ include "chat-system.image" (dict "repository" .Values.milvus.image.repository "tag" .Values.milvus.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["milvus", "run", "standalone"]
+          env:
+            - name: ETCD_ENDPOINTS
+              value: "milvus-etcd:2379"
+            - name: MINIO_ADDRESS
+              value: "milvus-minio:4566"
+            - name: MINIO_ACCESS_KEY_ID
+              value: "minioadmin"
+            - name: MINIO_SECRET_ACCESS_KEY
+              value: "minioadmin"
+            - name: MINIO_USE_SSL
+              value: "false"
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.milvus.port }}
+            - name: metrics
+              containerPort: {{ .Values.milvus.metricsPort }}
+          resources:
+            {{- toYaml .Values.milvus.resources | nindent 12 }}
+          volumeMounts:
+            - name: milvus-data
+              mountPath: /var/lib/milvus
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 30
+            periodSeconds: 20
+  volumeClaimTemplates:
+    - metadata:
+        name: milvus-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.milvus.storage.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.milvus.storage.size }}
+{{- end }}

@@ -1,0 +1,23 @@
+{{- if .Values.nfs.useStaticPV }}
+# Static PV pointing directly at an NFS export. Use this when the cluster has
+# no dynamic NFS provisioner (e.g. nfs-subdir-external-provisioner) — just a
+# plain `server`/`path` NFS mount. If a dynamic provisioner IS installed,
+# set `nfs.useStaticPV: false` and only the PVC below is created, letting the
+# provisioner create the backing PV itself.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Release.Name }}-nfs-raw-files-pv
+  labels:
+    {{- include "chat-system.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.nfs.size }}
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.nfs.storageClassName | quote }}
+  nfs:
+    server: {{ .Values.nfs.server | quote }}
+    path: {{ .Values.nfs.path | quote }}
+{{- end }}

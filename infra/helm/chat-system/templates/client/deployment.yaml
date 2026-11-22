@@ -1,0 +1,46 @@
+# Angular app, built into a static bundle and served by nginx (see
+# client/Dockerfile — multi-stage `ng build` -> nginx:alpine). No app env
+# vars needed here: the client only ever talks to the gateway, whose base
+# URL is baked in at build time or configured via nginx-injected runtime
+# config, not via this Deployment's env.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "client" "ctx" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.client.replicas }}
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "client" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "client" "ctx" $) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: client
+          image: {{ include "chat-system.image" (dict "repository" .Values.client.image.repository "tag" .Values.client.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.client.port }}
+          resources:
+            {{- toYaml .Values.client.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20

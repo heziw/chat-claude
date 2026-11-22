@@ -1,0 +1,22 @@
+# Shared ReadWriteMany PVC for raw uploaded files + structured side-stores
+# (parquet/duckdb). Mounted by: gateway (upload-staging, RW), ingestion-service
+# (RW), structured-data-agent (RO), summarization-service (RO), and both
+# Celery workers (RW).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-nfs-raw-files
+  labels:
+    {{- include "chat-system.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  {{- if .Values.nfs.useStaticPV }}
+  volumeName: {{ .Release.Name }}-nfs-raw-files-pv
+  storageClassName: {{ .Values.nfs.storageClassName | quote }}
+  {{- else }}
+  storageClassName: {{ .Values.nfs.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.nfs.size }}

@@ -1,0 +1,6 @@
+{{- if .Values.vllm.enabled }}
+# vLLM #1/4 — intfloat/multilingual-e5-large, embeddings (CONTRACTS.md VLLM_EMBED_URL).
+{{ include "chat-system.vllmDeployment" (dict "name" "vllm-embed" "model" .Values.vllm.embed "ctx" $) }}
+---
+{{ include "chat-system.vllmService" (dict "name" "vllm-embed" "model" .Values.vllm.embed "ctx" $) }}
+{{- end }}

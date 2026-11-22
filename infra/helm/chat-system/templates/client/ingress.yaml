@@ -1,0 +1,27 @@
+{{- if .Values.client.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: client
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "client" "ctx" $) | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.client.ingress.className }}
+  {{- if .Values.client.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.client.ingress.host }}
+      secretName: {{ .Values.client.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.client.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.client.ingress.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: client
+                port:
+                  number: {{ .Values.client.port }}
+{{- end }}

@@ -1,0 +1,43 @@
+{{- if .Values.ingestionService.hpa.enabled }}
+# Default: CPU-based HPA (works with just metrics-server, which is what we
+# can actually validate in this sandbox — no real cluster/custom-metrics API
+# here). ingestion-service's real bottleneck is Celery queue depth, not CPU
+# on this pod, since the heavy work happens in the celery-worker Deployment.
+# See values.yaml `ingestionService.hpa.useQueueDepthMetric` for the
+# KEDA/prometheus-adapter path to flip on once confirmed available in the
+# target cluster — that would replace the `resource` metric below with an
+# `external`/`object` metric sourced from the Redis `ingestion` queue length.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ingestion-service
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "ingestion-service" "ctx" $) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ingestion-service
+  minReplicas: {{ .Values.ingestionService.hpa.minReplicas }}
+  maxReplicas: {{ .Values.ingestionService.hpa.maxReplicas }}
+  metrics:
+    {{- if .Values.ingestionService.hpa.useQueueDepthMetric }}
+    # Requires prometheus-adapter (or KEDA, as a HPA-compatible external
+    # metric source) exposing this metric name in the custom/external
+    # metrics API — NOT installed/verifiable in this environment.
+    - type: External
+      external:
+        metric:
+          name: {{ .Values.ingestionService.hpa.queueDepthMetric.metricName }}
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.ingestionService.hpa.queueDepthMetric.targetAverageValue | quote }}
+    {{- else }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.ingestionService.hpa.targetCPUUtilizationPercentage }}
+    {{- end }}
+{{- end }}

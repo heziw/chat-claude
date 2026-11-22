@@ -1,0 +1,110 @@
+# Prod overlay. Fill in the real registry/hosts/storage classes/secrets for
+# the target air-gapped cluster before applying — every placeholder below
+# marked CHANGE-ME must be replaced (ideally the secretEnv ones via an
+# external secret manager, not committed here).
+# Usage: helm upgrade --install chat-system ./chat-system -n chat-prod \
+#          --create-namespace -f values.yaml -f values-prod.yaml
+
+global:
+  imageRegistry: "registry.internal" # CHANGE-ME if different per-cluster
+  env:
+    MOCK_LLM: "false"
+    VLLM_GENERATION_URL: "http://muse30b.llm-platform.svc.cluster.local:8000/v1" # CHANGE-ME
+    OIDC_ISSUER: "https://idp.internal.example.org/realms/chat" # CHANGE-ME
+    OIDC_CLIENT_ID: "chat-gateway" # CHANGE-ME
+    AUTH_MODE: "oidc"
+  secretEnv:
+    POSTGRES_URL: "CHANGE-ME-use-external-secret-manager"
+    REDIS_URL: "CHANGE-ME-use-external-secret-manager"
+    JWT_SECRET: "CHANGE-ME-use-external-secret-manager"
+    OIDC_CLIENT_SECRET: "CHANGE-ME-use-external-secret-manager"
+  runtimeClassName: "gvisor" # or "kata" — confirm installed on prod nodes first
+
+nfs:
+  storageClassName: "nfs-subdir-external-provisioner" # CHANGE-ME to the org's real StorageClass
+  useStaticPV: false
+  size: 2Ti
+
+gateway:
+  replicas: 3
+  ingress:
+    className: "nginx" # CHANGE-ME if the org uses a different IngressClass
+    host: "api.chat.internal.example.org" # CHANGE-ME
+    tls:
+      enabled: true
+      secretName: "chat-gateway-tls"
+  env:
+    GATEWAY_BASE_URL: "https://api.chat.internal.example.org" # CHANGE-ME, must match ingress.host
+    CLIENT_APP_URL: "https://chat.internal.example.org" # CHANGE-ME, must match client.ingress.host
+
+client:
+  replicas: 3
+  ingress:
+    className: "nginx"
+    host: "chat.internal.example.org" # CHANGE-ME
+    tls:
+      enabled: true
+      secretName: "chat-client-tls"
+
+ingestionService:
+  replicas: 3
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    # Flip once KEDA/prometheus-adapter is confirmed installed in prod:
+    useQueueDepthMetric: false
+
+retrievalOrchestrator:
+  replicas: 3
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    useLatencyMetric: false
+
+structuredDataAgent:
+  replicas: 3
+  useRuntimeClass: true # requires gVisor/Kata RuntimeClass pre-installed on prod nodes
+
+summarizationService:
+  replicas: 2
+
+celeryWorkers:
+  ingestion:
+    replicas: 4
+  summarization:
+    replicas: 2
+
+vllm:
+  enabled: true
+  image:
+    repository: vllm-openai
+    tag: "v0.6.3" # CHANGE-ME to the version validated/bundled through infra/offline-bundle
+
+# Production: use the org's externally managed Postgres instead of this
+# chart's local StatefulSet.
+postgres:
+  enabled: false
+
+# Production: prefer the Milvus Operator / cluster-mode deployment (see
+# the note in templates/milvus/milvus-statefulset.yaml) instead of this
+# chart's standalone StatefulSet, once the operator is available in-cluster.
+milvus:
+  enabled: true
+  storage:
+    size: 1Ti
+  resources:
+    requests: { cpu: "2", memory: 8Gi }
+    limits: { cpu: "4", memory: 16Gi }
+
+retentionSweeper:
+  schedule: "0 3 * * *"
+  config:
+    DRY_RUN: "false"
+
+networkPolicies:
+  enabled: true
+  ingressControllerNamespaceSelector:
+    key: "kubernetes.io/metadata.name"
+    value: "ingress-nginx" # CHANGE-ME to the org's actual ingress-controller namespace

@@ -1,0 +1,72 @@
+# This is the one service that executes model-generated code (NL->pandas,
+# see CONTRACTS.md POST /structured-query) against uploaded user data, so its
+# pod runs under a sandboxed RuntimeClass (gVisor by default; see
+# global.runtimeClassName). The RuntimeClass object itself and the
+# gVisor/Kata runtime on nodes are a cluster-level prerequisite this chart
+# does NOT install — set `structuredDataAgent.useRuntimeClass: false` or
+# `global.runtimeClassName: ""` to run on the default runtime instead (e.g.
+# for clusters/dev environments without gVisor/Kata available yet).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: structured-data-agent
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "structured-data-agent" "ctx" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.structuredDataAgent.replicas }}
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "structured-data-agent" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "structured-data-agent" "ctx" $) | nindent 8 }}
+    spec:
+      {{- if and .Values.structuredDataAgent.useRuntimeClass .Values.global.runtimeClassName }}
+      runtimeClassName: {{ .Values.global.runtimeClassName }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: structured-data-agent
+          image: {{ include "chat-system.image" (dict "repository" .Values.structuredDataAgent.image.repository "tag" .Values.structuredDataAgent.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.structuredDataAgent.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-shared-env
+            - secretRef:
+                name: {{ .Release.Name }}-shared-secret
+          resources:
+            {{- toYaml .Values.structuredDataAgent.resources | nindent 12 }}
+          {{- if .Values.structuredDataAgent.nfs.mount }}
+          volumeMounts:
+            - name: nfs-raw-files
+              mountPath: {{ .Values.nfs.mountPath }}
+              {{- if .Values.structuredDataAgent.nfs.subPath }}
+              subPath: {{ .Values.structuredDataAgent.nfs.subPath }}
+              {{- end }}
+              readOnly: {{ .Values.structuredDataAgent.nfs.readOnly }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /openapi.json
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /openapi.json
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      {{- if .Values.structuredDataAgent.nfs.mount }}
+      volumes:
+        - name: nfs-raw-files
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-raw-files
+      {{- end }}

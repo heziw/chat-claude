@@ -1,0 +1,20 @@
+apiVersion: v2
+name: chat-system
+description: >
+  Umbrella Helm chart for the air-gapped enterprise RAG chat system.
+  Deploys the application tier (gateway, client, 4 Python services, 2 Celery
+  workers), the 4 small vLLM model servers (embed/rerank/router/vision), and
+  the supporting infra (Redis, Postgres, Milvus standalone, NFS PV/PVC,
+  retention-sweeper CronJob, NetworkPolicies). See /shared/CONTRACTS.md and
+  the approved infra plan for the authoritative API/env contracts and the
+  exact vLLM serve parameters reproduced in this chart.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - rag
+  - air-gapped
+  - vllm
+  - milvus
+maintainers:
+  - name: platform-team

@@ -1,0 +1,35 @@
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <span class="user-name">{{ currentUserName() }}</span>
+    <button type="button" class="logout" (click)="logout()" title="התנתק">התנתק</button>
+  </div>
+
+  <button type="button" class="new-conversation" (click)="createConversation()" [disabled]="isCreating()">
+    {{ isCreating() ? 'יוצר שיחה...' : '+ שיחה חדשה' }}
+  </button>
+
+  @if (errorMessage()) {
+    <div class="sidebar-error">{{ errorMessage() }}</div>
+  }
+
+  @if (isLoading()) {
+    <div class="sidebar-loading">טוען שיחות...</div>
+  } @else if (sortedConversations().length === 0) {
+    <div class="sidebar-empty">אין שיחות עדיין</div>
+  } @else {
+    <ul class="conversation-list">
+      @for (conversation of sortedConversations(); track conversation.id) {
+        <li>
+          <a
+            [routerLink]="['/conversations', conversation.id]"
+            routerLinkActive="active"
+            class="conversation-item"
+          >
+            <span class="title">{{ conversation.title }}</span>
+            <span class="last-active">{{ formatLastActive(conversation.last_active_at) }}</span>
+          </a>
+        </li>
+      }
+    </ul>
+  }
+</aside>

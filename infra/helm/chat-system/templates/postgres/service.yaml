@@ -1,0 +1,16 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "postgres" "ctx" $) | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "chat-system.selectorLabels" (dict "component" "postgres" "ctx" $) | nindent 4 }}
+  ports:
+    - name: postgres
+      port: {{ .Values.postgres.port }}
+      targetPort: {{ .Values.postgres.port }}
+{{- end }}

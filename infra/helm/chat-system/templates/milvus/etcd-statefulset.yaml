@@ -1,0 +1,56 @@
+{{- if .Values.milvus.enabled }}
+# etcd: Milvus standalone's metadata store. Single node, matches the
+# docker-compose dev topology. In production, prefer the Milvus Operator
+# (which manages its own etcd/MinIO dependencies, HA'd) instead of this
+# bare StatefulSet — see the note on the milvus StatefulSet below.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: milvus-etcd
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "milvus-etcd" "ctx" $) | nindent 4 }}
+spec:
+  serviceName: milvus-etcd
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "milvus-etcd" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "milvus-etcd" "ctx" $) | nindent 8 }}
+    spec:
+      containers:
+        - name: etcd
+          image: {{ include "chat-system.image" (dict "repository" .Values.milvus.etcd.image.repository "tag" .Values.milvus.etcd.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: ETCD_AUTO_COMPACTION_MODE
+              value: revision
+            - name: ETCD_AUTO_COMPACTION_RETENTION
+              value: "1000"
+            - name: ETCD_QUOTA_BACKEND_BYTES
+              value: "4294967296"
+            - name: ETCD_SNAPSHOT_COUNT
+              value: "50000"
+          command: ["etcd"]
+          args:
+            - -advertise-client-urls=http://127.0.0.1:2379
+            - -listen-client-urls=http://0.0.0.0:2379
+            - --data-dir=/etcd
+          ports:
+            - name: client
+              containerPort: 2379
+          volumeMounts:
+            - name: etcd-data
+              mountPath: /etcd
+  volumeClaimTemplates:
+    - metadata:
+        name: etcd-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.milvus.etcd.storage.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.milvus.etcd.storage.size }}
+{{- end }}

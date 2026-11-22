@@ -1,0 +1,30 @@
+<div class="login-page">
+  <form class="login-card" (ngSubmit)="submit()">
+    <h1>צ'אט RAG ארגוני</h1>
+    <p class="subtitle">התחברות במצב פיתוח (dev)</p>
+
+    <label for="username">שם משתמש</label>
+    <input
+      id="username"
+      name="username"
+      type="text"
+      autocomplete="username"
+      placeholder="לדוגמה: hezi"
+      [ngModel]="username()"
+      (ngModelChange)="username.set($event)"
+      [disabled]="isSubmitting()"
+    />
+
+    @if (errorMessage()) {
+      <div class="error">{{ errorMessage() }}</div>
+    }
+
+    <button type="submit" [disabled]="isSubmitting()">
+      {{ isSubmitting() ? 'מתחבר...' : 'התחבר' }}
+    </button>
+
+    <p class="hint">
+      זהו מסך dev-login בלבד (ללא IdP). התחברות SSO/OIDC אמיתית תתווסף בהמשך.
+    </p>
+  </form>
+</div>

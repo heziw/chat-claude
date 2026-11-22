@@ -1,0 +1,52 @@
+# Celery worker consuming the "summarization" queue (hierarchical map-reduce
+# summarization). Same image as summarization-service, different command.
+# No Service: this Deployment serves no HTTP traffic. Fixed replica count
+# for now (no HPA) per the plan's current scope.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker-summarization
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "celery-worker-summarization" "ctx" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.celeryWorkers.summarization.replicas }}
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "celery-worker-summarization" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "celery-worker-summarization" "ctx" $) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-worker-summarization
+          image: {{ include "chat-system.image" (dict "repository" .Values.celeryWorkers.summarization.image.repository "tag" .Values.celeryWorkers.summarization.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: {{ toYaml .Values.celeryWorkers.summarization.command | nindent 12 }}
+          args: {{ toYaml .Values.celeryWorkers.summarization.args | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-shared-env
+            - secretRef:
+                name: {{ .Release.Name }}-shared-secret
+          resources:
+            {{- toYaml .Values.celeryWorkers.summarization.resources | nindent 12 }}
+          {{- if .Values.celeryWorkers.summarization.nfs.mount }}
+          volumeMounts:
+            - name: nfs-raw-files
+              mountPath: {{ .Values.nfs.mountPath }}
+              {{- if .Values.celeryWorkers.summarization.nfs.subPath }}
+              subPath: {{ .Values.celeryWorkers.summarization.nfs.subPath }}
+              {{- end }}
+              readOnly: {{ .Values.celeryWorkers.summarization.nfs.readOnly }}
+          {{- end }}
+      {{- if .Values.celeryWorkers.summarization.nfs.mount }}
+      volumes:
+        - name: nfs-raw-files
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-raw-files
+      {{- end }}

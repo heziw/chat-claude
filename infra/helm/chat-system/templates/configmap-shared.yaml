@@ -1,0 +1,14 @@
+# Non-secret env vars shared across every app-tier container (gateway, the
+# 4 Python services, both Celery workers). Per-component overrides/extras are
+# set directly as `env:` on each Deployment, after envFrom this ConfigMap, so
+# they win on key collisions.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-shared-env
+  labels:
+    {{- include "chat-system.labels" . | nindent 4 }}
+data:
+  {{- range $k, $v := .Values.global.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

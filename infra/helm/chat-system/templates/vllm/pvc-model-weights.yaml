@@ -1,0 +1,18 @@
+{{- if and .Values.vllm.enabled .Values.vllm.modelWeights.pvc.create }}
+# Pre-populated offline (via infra/offline-bundle) with the HF snapshot
+# cache for all 4 models below, laid out as a normal HF_HOME directory.
+# Nothing in this cluster ever downloads model weights at pod startup.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.vllm.modelWeights.pvc.name }}
+  labels:
+    {{- include "chat-system.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.vllm.modelWeights.pvc.accessModes | nindent 4 }}
+  storageClassName: {{ .Values.vllm.modelWeights.pvc.storageClassName | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.vllm.modelWeights.pvc.size }}
+{{- end }}

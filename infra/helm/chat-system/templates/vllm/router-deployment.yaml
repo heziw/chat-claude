@@ -1,0 +1,6 @@
+{{- if .Values.vllm.enabled }}
+# vLLM #3/4 — meta-llama/Llama-3.1-8B-Instruct, query router + map-summarization (CONTRACTS.md VLLM_ROUTER_URL).
+{{ include "chat-system.vllmDeployment" (dict "name" "vllm-router" "model" .Values.vllm.router "ctx" $) }}
+---
+{{ include "chat-system.vllmService" (dict "name" "vllm-router" "model" .Values.vllm.router "ctx" $) }}
+{{- end }}

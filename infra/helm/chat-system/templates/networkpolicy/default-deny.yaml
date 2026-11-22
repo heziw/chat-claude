@@ -1,0 +1,19 @@
+{{- if .Values.networkPolicies.enabled }}
+# Baseline: deny all inbound traffic to every pod in this namespace unless
+# explicitly allowed by another NetworkPolicy (NetworkPolicies are additive/
+# OR'd per pod, so this combines with allow-intra-namespace.yaml and
+# allow-ingress-to-edge.yaml below). Egress is intentionally left
+# unrestricted (no `Egress` in policyTypes) so DNS, the internal registry,
+# and the external muse30b/gemma3 endpoint keep working without an
+# explicit egress allowlist here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    {{- include "chat-system.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+{{- end }}

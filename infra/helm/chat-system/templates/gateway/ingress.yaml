@@ -1,0 +1,31 @@
+{{- if .Values.gateway.ingress.enabled }}
+# The gateway is the ONLY service exposed via Ingress — see
+# templates/networkpolicy/*.yaml. The Angular client is served by its own
+# Ingress host/path (templates/client/ingress.yaml) but never talks directly
+# to any backend service; it only calls the gateway from the browser.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "gateway" "ctx" $) | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.gateway.ingress.className }}
+  {{- if .Values.gateway.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.gateway.ingress.host }}
+      secretName: {{ .Values.gateway.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.gateway.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.gateway.ingress.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: {{ .Values.gateway.port }}
+{{- end }}

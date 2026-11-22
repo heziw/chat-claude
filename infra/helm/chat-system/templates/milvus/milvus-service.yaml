@@ -1,0 +1,19 @@
+{{- if .Values.milvus.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: milvus
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "milvus" "ctx" $) | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "chat-system.selectorLabels" (dict "component" "milvus" "ctx" $) | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ .Values.milvus.port }}
+      targetPort: {{ .Values.milvus.port }}
+    - name: metrics
+      port: {{ .Values.milvus.metricsPort }}
+      targetPort: {{ .Values.milvus.metricsPort }}
+{{- end }}

@@ -1,0 +1,142 @@
+<div
+  class="chat"
+  (dragover)="onDragOver($event)"
+  (dragleave)="onDragLeave($event)"
+  (drop)="onDrop($event)"
+>
+  <header class="chat-header">
+    <h2>{{ conversation()?.title ?? 'שיחה' }}</h2>
+  </header>
+
+  <section class="messages">
+    @if (isLoadingMessages()) {
+      <div class="messages-status">טוען הודעות...</div>
+    } @else if (loadError()) {
+      <div class="messages-status error">{{ loadError() }}</div>
+    } @else if (messages().length === 0 && !isStreaming()) {
+      <div class="messages-status">אין הודעות עדיין. שאל שאלה כדי להתחיל.</div>
+    }
+
+    @for (message of messages(); track message.id) {
+      <div class="bubble-row" [class.from-user]="message.role === 'user'">
+        <div
+          class="bubble"
+          [class.user]="message.role === 'user'"
+          [class.assistant]="message.role !== 'user'"
+        >
+          <p class="bubble-content">{{ message.content }}</p>
+
+          @if (message.citations.length) {
+            <div class="citations">
+              @for (citation of message.citations; track $index) {
+                <button
+                  type="button"
+                  class="citation-chip"
+                  (click)="toggleCitation(citationKey(message.id, $index))"
+                >
+                  📎 {{ citation.source_ref }}
+                </button>
+                @if (expandedCitationKey() === citationKey(message.id, $index)) {
+                  <div class="citation-snippet">
+                    {{ citation.snippet ?? 'אין תצוגה מקדימה זמינה' }}
+                  </div>
+                }
+              }
+            </div>
+          }
+        </div>
+      </div>
+    }
+
+    @if (isStreaming()) {
+      <div class="bubble-row">
+        <div class="bubble assistant streaming">
+          <p class="bubble-content">{{ streamingText() }}<span class="cursor">▍</span></p>
+
+          @if (streamingCitations().length) {
+            <div class="citations">
+              @for (citation of streamingCitations(); track $index) {
+                <button
+                  type="button"
+                  class="citation-chip"
+                  (click)="toggleCitation(citationKey('streaming', $index))"
+                >
+                  📎 {{ citation.source_ref }}
+                </button>
+                @if (expandedCitationKey() === citationKey('streaming', $index)) {
+                  <div class="citation-snippet">
+                    {{ citation.snippet ?? 'אין תצוגה מקדימה זמינה' }}
+                  </div>
+                }
+              }
+            </div>
+          }
+        </div>
+      </div>
+    }
+
+    <div #messagesEnd></div>
+  </section>
+
+  @if (uploadingFiles().length) {
+    <section class="uploads">
+      @for (file of uploadingFiles(); track file.fileId) {
+        <div class="upload-chip" [class.failed]="file.status === 'failed'">
+          <span class="badge">{{ statusBadge(file.status) }}</span>
+          <span class="name">{{ file.originalName }}</span>
+          <span class="status">{{ statusLabel(file.status) }}</span>
+          @if (file.errorMessage) {
+            <span class="error-msg">{{ file.errorMessage }}</span>
+          }
+        </div>
+      }
+    </section>
+  }
+
+  @if (isDragOver()) {
+    <div class="drop-overlay">שחרר כאן להעלאת קובץ</div>
+  }
+
+  <footer class="composer">
+    <input
+      #fileInput
+      type="file"
+      class="hidden-file-input"
+      (change)="onFileInputChange($event)"
+      multiple
+    />
+    <button type="button" class="attach-button" (click)="openFilePicker()" title="הוסף קובץ">
+      📎
+    </button>
+
+    <select
+      class="thinking-level-select"
+      [ngModel]="thinkingLevel()"
+      (ngModelChange)="thinkingLevel.set($event)"
+      [disabled]="isStreaming()"
+      title="רמת חשיבה: עד כמה המודל 'יחשוב' לפני שהוא עונה, ובמסלול הנתונים המבניים — האם לבדוק את התוצאה ולתקן את עצמו אם היא נראית לא סבירה"
+    >
+      <option value="fast">⚡ מהיר</option>
+      <option value="standard">רגיל</option>
+      <option value="deep">🧠 חשיבה עמוקה</option>
+    </select>
+
+    <textarea
+      rows="1"
+      placeholder="שאל שאלה... (Enter לשליחה, Shift+Enter לשורה חדשה)"
+      [ngModel]="questionText()"
+      (ngModelChange)="questionText.set($event)"
+      (keydown)="onQuestionKeydown($event)"
+      [disabled]="isStreaming()"
+    ></textarea>
+
+    <button
+      type="button"
+      class="send-button"
+      (click)="sendQuestion()"
+      [disabled]="isStreaming() || !questionText().trim()"
+    >
+      {{ isStreaming() ? 'שולח...' : 'שלח' }}
+    </button>
+  </footer>
+</div>

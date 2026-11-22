@@ -1,0 +1,15 @@
+{{- if .Values.postgres.enabled }}
+# Mirrors infra/docker/postgres-init.sql (copied into files/ so this chart
+# stays self-contained — Helm templates can only read files under the chart
+# root). Keep both in sync if the schema changes; CONTRACTS.md is the source
+# of truth for the schema itself.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-postgres-init
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "postgres" "ctx" $) | nindent 4 }}
+data:
+  init.sql: |
+{{ .Files.Get "files/postgres-init.sql" | indent 4 }}
+{{- end }}

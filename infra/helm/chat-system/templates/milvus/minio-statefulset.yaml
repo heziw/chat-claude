@@ -1,0 +1,50 @@
+{{- if .Values.milvus.enabled }}
+# Object storage backing Milvus standalone. Dev default image mirrors
+# docker-compose (localstack S3 emulator); swap `milvus.minio.image` for a
+# real MinIO image in staging/prod (see values-prod.yaml).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: milvus-minio
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "milvus-minio" "ctx" $) | nindent 4 }}
+spec:
+  serviceName: milvus-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "milvus-minio" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "milvus-minio" "ctx" $) | nindent 8 }}
+    spec:
+      containers:
+        - name: minio
+          image: {{ include "chat-system.image" (dict "repository" .Values.milvus.minio.image.repository "tag" .Values.milvus.minio.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: SERVICES
+              value: "s3"
+            - name: DEFAULT_REGION
+              value: "us-east-1"
+            - name: AWS_ACCESS_KEY_ID
+              value: "minioadmin"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "minioadmin"
+          ports:
+            - name: s3
+              containerPort: 4566
+          volumeMounts:
+            - name: minio-data
+              mountPath: /var/lib/localstack
+  volumeClaimTemplates:
+    - metadata:
+        name: minio-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.milvus.minio.storage.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.milvus.minio.storage.size }}
+{{- end }}

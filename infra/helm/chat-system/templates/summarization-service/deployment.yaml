@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: summarization-service
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "summarization-service" "ctx" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.summarizationService.replicas }}
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "summarization-service" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "summarization-service" "ctx" $) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: summarization-service
+          image: {{ include "chat-system.image" (dict "repository" .Values.summarizationService.image.repository "tag" .Values.summarizationService.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.summarizationService.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-shared-env
+            - secretRef:
+                name: {{ .Release.Name }}-shared-secret
+          resources:
+            {{- toYaml .Values.summarizationService.resources | nindent 12 }}
+          {{- if .Values.summarizationService.nfs.mount }}
+          volumeMounts:
+            - name: nfs-raw-files
+              mountPath: {{ .Values.nfs.mountPath }}
+              {{- if .Values.summarizationService.nfs.subPath }}
+              subPath: {{ .Values.summarizationService.nfs.subPath }}
+              {{- end }}
+              readOnly: {{ .Values.summarizationService.nfs.readOnly }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /openapi.json
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /openapi.json
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      {{- if .Values.summarizationService.nfs.mount }}
+      volumes:
+        - name: nfs-raw-files
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-raw-files
+      {{- end }}

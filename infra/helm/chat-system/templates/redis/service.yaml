@@ -1,0 +1,16 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "redis" "ctx" $) | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "chat-system.selectorLabels" (dict "component" "redis" "ctx" $) | nindent 4 }}
+  ports:
+    - name: redis
+      port: {{ .Values.redis.port }}
+      targetPort: {{ .Values.redis.port }}
+{{- end }}

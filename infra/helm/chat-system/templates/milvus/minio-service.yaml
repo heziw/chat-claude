@@ -1,0 +1,16 @@
+{{- if .Values.milvus.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: milvus-minio
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "milvus-minio" "ctx" $) | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "chat-system.selectorLabels" (dict "component" "milvus-minio" "ctx" $) | nindent 4 }}
+  ports:
+    - name: s3
+      port: 4566
+      targetPort: 4566
+{{- end }}

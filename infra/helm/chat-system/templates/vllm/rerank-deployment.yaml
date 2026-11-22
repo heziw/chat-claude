@@ -1,0 +1,6 @@
+{{- if .Values.vllm.enabled }}
+# vLLM #2/4 — mixedbread-ai/mxbai-rerank-large-v1, reranker (CONTRACTS.md VLLM_RERANK_URL).
+{{ include "chat-system.vllmDeployment" (dict "name" "vllm-rerank" "model" .Values.vllm.rerank "ctx" $) }}
+---
+{{ include "chat-system.vllmService" (dict "name" "vllm-rerank" "model" .Values.vllm.rerank "ctx" $) }}
+{{- end }}

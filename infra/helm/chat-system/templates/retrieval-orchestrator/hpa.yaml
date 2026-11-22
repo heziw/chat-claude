@@ -1,0 +1,37 @@
+{{- if .Values.retrievalOrchestrator.hpa.enabled }}
+# Default: CPU-based HPA. The plan calls for CPU/latency scaling; a p95
+# latency target requires a custom/external metric (prometheus-adapter
+# reading a request-duration histogram) that isn't installed/verifiable in
+# this sandbox, so it's left as an opt-in flag — see
+# `retrievalOrchestrator.hpa.useLatencyMetric` in values.yaml.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: retrieval-orchestrator
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "retrieval-orchestrator" "ctx" $) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: retrieval-orchestrator
+  minReplicas: {{ .Values.retrievalOrchestrator.hpa.minReplicas }}
+  maxReplicas: {{ .Values.retrievalOrchestrator.hpa.maxReplicas }}
+  metrics:
+    {{- if .Values.retrievalOrchestrator.hpa.useLatencyMetric }}
+    - type: External
+      external:
+        metric:
+          name: {{ .Values.retrievalOrchestrator.hpa.latencyMetric.metricName }}
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.retrievalOrchestrator.hpa.latencyMetric.targetAverageValue | quote }}
+    {{- else }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.retrievalOrchestrator.hpa.targetCPUUtilizationPercentage }}
+    {{- end }}
+{{- end }}

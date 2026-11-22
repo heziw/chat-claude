@@ -1,0 +1,24 @@
+# Node
+node_modules/
+dist/
+.angular/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local dev data (stand-in for the NFS/PVC mount — see README "Local dev")
+data/nfs-raw-files/*
+!data/nfs-raw-files/.gitkeep
+# Stray copies some services wrote to before NFS_ROOT_PATH was consistently
+# set to an absolute path in local dev (see ingestion-service/README.md
+# "Known environment gotcha") -- never a real source directory.
+services/*/data/
+
+# Env files with real secrets (committed: .env.example only)
+.env
+gateway/.env
+
+# Logs
+*.log

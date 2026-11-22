@@ -1,0 +1,488 @@
+# Default values for chat-system.
+# This file targets a generic/dev-like cluster. See values-dev.yaml / values-prod.yaml
+# for environment overlays (`helm upgrade -f values.yaml -f values-prod.yaml ...`).
+#
+# Nothing in this chart creates a Namespace: deploy with
+#   helm install chat-system ./chat-system -n <ns> --create-namespace
+# so the same chart works for dev/staging/prod namespaces without edits here.
+
+global:
+  # Air-gapped registry that mirrors every image used by this chart (app images
+  # built by infra/offline-bundle, plus the vLLM OpenAI server image and any
+  # third-party images like postgres/redis/milvus that were pulled once on a
+  # connected machine, `docker save`'d, transferred, and `docker load`/pushed
+  # into this registry). Nothing in this chart ever pulls from a public registry.
+  imageRegistry: registry.internal
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  # - name: registry-internal-pull-secret
+
+  # Default StorageClass for ReadWriteOnce volumes (Postgres/Milvus local PVCs).
+  # "" = cluster default StorageClass.
+  storageClassName: ""
+
+  # gVisor/Kata runtimeClass used by structured-data-agent to sandbox the
+  # NL->pandas code execution path. Must already exist in the cluster
+  # (`kubectl get runtimeclass`) — this chart does not install the RuntimeClass
+  # or the gVisor/Kata-containers runtime itself, only references it.
+  # Set to "kata" if the cluster has Kata Containers instead of gVisor, or ""
+  # to run the pod with the default runtime (e.g. for local/dev clusters that
+  # don't have either installed yet — NOT recommended for real workloads since
+  # it loses the extra sandbox isolation around arbitrary pandas code exec).
+  runtimeClassName: "gvisor"
+
+  # Shared, non-secret env vars injected into every app-tier container via a
+  # single ConfigMap (templates/configmap-shared.yaml). Mirrors
+  # shared/CONTRACTS.md's "Env vars" section / repo-root .env.example.
+  # Service-specific overrides live under each component's `env:` block below.
+  env:
+    MILVUS_HOST: "milvus"
+    MILVUS_PORT: "19530"
+    NFS_ROOT_PATH: "/mnt/nfs-raw-files"
+    MOCK_LLM: "false" # flip to "true" to run the whole stack without GPUs/vLLM
+    # The 4 small models this chart deploys (see `vllm.*` below):
+    VLLM_EMBED_URL: "http://vllm-embed:8000/v1"
+    VLLM_RERANK_URL: "http://vllm-rerank:8000/v1"
+    VLLM_ROUTER_URL: "http://vllm-router:8000/v1"
+    VLLM_VISION_URL: "http://vllm-vision:8000/v1"
+    # muse30b/gemma3 already run on the org's existing 8xH200 vLLM cluster,
+    # OUTSIDE this chart's scope (plan explicitly says "not touching their
+    # allocation") — point this at that existing OpenAI-compatible endpoint.
+    VLLM_GENERATION_URL: "http://muse30b.llm-platform.svc.cluster.local:8000/v1"
+    AUTH_MODE: "oidc" # "oidc" | "dev" (dev enables POST /auth/dev-login, no IdP)
+    OIDC_ISSUER: "https://idp.internal.example.org/realms/chat"
+    OIDC_CLIENT_ID: "chat-gateway"
+
+  # Secret-grade shared env vars (templates/secret-shared.yaml). Defaults below
+  # are dev-only placeholders — in staging/prod, override via
+  # `--set-string global.secretEnv.X=...` or (better) point Helm at values
+  # supplied by an external secret manager / sealed-secrets / SOPS, never
+  # commit real values here.
+  secretEnv:
+    POSTGRES_URL: "postgresql://chatuser:chatpass@postgres:5432/chatdb"
+    REDIS_URL: "redis://redis:6379/0"
+    JWT_SECRET: "CHANGE-ME-dev-only"
+    OIDC_CLIENT_SECRET: "CHANGE-ME-dev-only"
+
+# ---------------------------------------------------------------------------
+# NFS: shared ReadWriteMany volume for raw uploaded files + structured
+# side-stores (parquet/duckdb). Mounted by gateway (upload staging, RW),
+# ingestion-service (RW), structured-data-agent (RO), summarization-service
+# (RO).
+# ---------------------------------------------------------------------------
+nfs:
+  # Requires an NFS provisioner already running in the cluster, e.g.
+  # nfs-subdir-external-provisioner (https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner)
+  # pointed at the org's NFS export. This chart only creates the PV+PVC
+  # (or just the PVC if using a dynamic StorageClass — see `useStaticPV`).
+  storageClassName: "nfs-subdir-external-provisioner"
+  size: 500Gi
+  # If true, create a static PV bound to `server`/`path` below (useful when
+  # there's no dynamic NFS provisioner, just a plain NFS export). If false,
+  # only a PVC is created against `storageClassName` and the provisioner
+  # dynamically creates the backing PV.
+  useStaticPV: false
+  server: "nfs.internal.example.org"
+  path: "/export/chat-system/raw-files"
+  mountPath: "/mnt/nfs-raw-files"
+
+# ---------------------------------------------------------------------------
+# Application tier
+# ---------------------------------------------------------------------------
+gateway:
+  replicas: 2
+  image:
+    repository: chat-gateway
+    tag: "0.1.0"
+  port: 3000
+  service:
+    type: ClusterIP
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  env:
+    INGESTION_SERVICE_URL: "http://ingestion-service:8000"
+    RETRIEVAL_SERVICE_URL: "http://retrieval-orchestrator:8001"
+    GATEWAY_BASE_URL: "https://api.chat.internal.example.org"
+    CLIENT_APP_URL: "https://chat.internal.example.org"
+    PORT: "3000"
+    UPLOAD_TMP_DIR: "/tmp/gateway-uploads"
+    MAX_UPLOAD_SIZE_BYTES: "536870912"
+  nfs:
+    mount: true
+    readOnly: false
+    subPath: "upload-staging"
+  ingress:
+    enabled: true
+    className: "nginx"
+    # Separate host from the client's, since the gateway's routes
+    # (/auth, /conversations, ...) have no shared /api path prefix per
+    # CONTRACTS.md — avoids both Ingress objects claiming host "/" "/".
+    # The Angular client calls this origin directly from the browser
+    # (CLIENT_APP_URL above is only used for the gateway's CORS allow-list).
+    host: "api.chat.internal.example.org"
+    path: "/"
+    tls:
+      enabled: false
+      secretName: "chat-gateway-tls"
+
+client:
+  replicas: 2
+  image:
+    repository: chat-client
+    tag: "0.1.0"
+  port: 80
+  service:
+    type: ClusterIP
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+  ingress:
+    enabled: true
+    className: "nginx"
+    host: "chat.internal.example.org"
+    path: "/"
+    tls:
+      enabled: false
+      secretName: "chat-client-tls"
+
+ingestionService:
+  replicas: 2
+  image:
+    repository: chat-ingestion-service
+    tag: "0.1.0"
+  port: 8000
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "2", memory: 2Gi }
+  nfs:
+    mount: true
+    readOnly: false
+    subPath: ""
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    # Default: plain CPU-based autoscaling, works with just metrics-server.
+    targetCPUUtilizationPercentage: 70
+    # Preferred in real deployments: scale on Celery queue depth instead of
+    # CPU, since ingestion is bursty (one big PDF upload -> long async
+    # pipeline, not necessarily CPU-bound on *this* pod). That requires one
+    # of:
+    #   - KEDA (https://keda.sh) ScaledObject on the `ingestion` Redis queue
+    #     (trigger type: redis, listName: ingestion), scaling the same
+    #     Deployment this chart creates; or
+    #   - prometheus-adapter exposing a custom/external metric
+    #     (celery_queue_depth{queue="ingestion"}) consumed by a
+    #     `type: External` HPA metric.
+    # Neither is installed by this chart (no custom-metrics API available in
+    # this environment to validate against). Flip `useQueueDepthMetric` once
+    # KEDA or prometheus-adapter is confirmed installed in the target cluster,
+    # and the HPA template below will emit the External metric block instead
+    # of plain CPU.
+    useQueueDepthMetric: false
+    queueDepthMetric:
+      metricName: "celery_queue_depth_ingestion" # exposed via prometheus-adapter
+      targetAverageValue: "10"
+
+retrievalOrchestrator:
+  replicas: 2
+  image:
+    repository: chat-retrieval-orchestrator
+    tag: "0.1.0"
+  port: 8001
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "2", memory: 1Gi }
+  env:
+    STRUCTURED_AGENT_URL: "http://structured-data-agent:8002"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    # Default: CPU. Preferred: p95 request-latency custom metric (e.g. from
+    # prometheus-adapter reading an NGINX/Envoy or FastAPI histogram), same
+    # caveat as ingestion-service above — not installed/available here.
+    targetCPUUtilizationPercentage: 70
+    useLatencyMetric: false
+    latencyMetric:
+      metricName: "http_request_duration_p95_seconds"
+      targetAverageValue: "0.8"
+
+structuredDataAgent:
+  replicas: 2
+  image:
+    repository: chat-structured-data-agent
+    tag: "0.1.0"
+  port: 8002
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  nfs:
+    mount: true
+    readOnly: true
+    subPath: ""
+  # See global.runtimeClassName — this is the one pod in the whole system that
+  # executes model-generated code (NL->pandas) and therefore runs sandboxed.
+  useRuntimeClass: true
+
+summarizationService:
+  replicas: 2
+  image:
+    repository: chat-summarization-service
+    tag: "0.1.0"
+  port: 8003
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  nfs:
+    mount: true
+    readOnly: true
+    subPath: ""
+
+celeryWorkers:
+  ingestion:
+    replicas: 2
+    # Reuses the ingestion-service image; only the container command differs.
+    image:
+      repository: chat-ingestion-service
+      tag: "0.1.0"
+    command: ["celery"]
+    args: ["-A", "app.tasks", "worker", "--loglevel=info", "-Q", "ingestion", "--concurrency=4"]
+    resources:
+      requests: { cpu: 500m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
+    nfs:
+      mount: true
+      readOnly: false
+      subPath: ""
+  summarization:
+    replicas: 2
+    # Reuses the summarization-service image; only the container command differs.
+    image:
+      repository: chat-summarization-service
+      tag: "0.1.0"
+    command: ["celery"]
+    args: ["-A", "app.tasks", "worker", "--loglevel=info", "-Q", "summarization", "--concurrency=4"]
+    resources:
+      requests: { cpu: 500m, memory: 1Gi }
+      limits: { cpu: "2", memory: 3Gi }
+    nfs:
+      mount: true
+      readOnly: false
+      subPath: ""
+
+# ---------------------------------------------------------------------------
+# vLLM — 4 small-model Deployments. Exact `vllm serve` args below are copied
+# verbatim from the approved infra plan; do not change them without updating
+# the plan first. Each model gets 1 whole `nvidia.com/gpu` request/limit here
+# (fractional/MIG sharing of the underlying H200s is an open allocation
+# question per the plan — adjust once resolved, e.g. via MIG profiles or a
+# time-slicing device-plugin config, which would change this resource block,
+# not the vllm args).
+#
+# Air-gapped model weights: `image.repository`/`tag` point at an internal
+# mirror of the vllm/vllm-openai image (built+pushed via
+# infra/offline-bundle: `docker pull` on a connected box -> `docker save` ->
+# tar -> secure transfer -> `docker load` + push to registry.internal).
+# Model weights themselves are NOT downloaded at pod startup: each model's
+# PVC (`modelWeights.pvc`) is pre-populated offline with the HF snapshot
+# (also via infra/offline-bundle) and mounted at HF_HOME, with
+# HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 forcing vllm to resolve the model
+# id purely from the local cache.
+# ---------------------------------------------------------------------------
+vllm:
+  # Set to false for dev/CI environments with no GPU nodes (pair with
+  # global.env.MOCK_LLM: "true" so the Python services fall back to the
+  # deterministic mock embed/rerank/router/vision clients from
+  # shared/CONTRACTS.md's "Mock mode" section instead of calling these URLs).
+  enabled: true
+  image:
+    repository: vllm-openai
+    tag: "v0.6.3"
+  modelWeights:
+    pvc:
+      # One shared PVC holding all 4 pre-downloaded HF snapshots, laid out as
+      # a normal HF_HOME cache dir (offline-bundle populates it that way).
+      create: true
+      name: "vllm-model-weights"
+      size: 200Gi
+      storageClassName: ""
+      accessModes: ["ReadOnlyMany"]
+    mountPath: "/root/.cache/huggingface"
+
+  embed:
+    servedModelName: "e5-embed"
+    modelId: "intfloat/multilingual-e5-large"
+    port: 8000
+    args:
+      - "--task"
+      - "embed"
+      - "--gpu-memory-utilization"
+      - "0.15"
+      - "--max-model-len"
+      - "512"
+      - "--dtype"
+      - "bfloat16"
+      - "--served-model-name"
+      - "e5-embed"
+    resources:
+      requests: { cpu: "2", memory: 8Gi, "nvidia.com/gpu": 1 }
+      limits: { cpu: "4", memory: 16Gi, "nvidia.com/gpu": 1 }
+
+  rerank:
+    servedModelName: "mxbai-rerank"
+    modelId: "mixedbread-ai/mxbai-rerank-large-v1"
+    port: 8000
+    args:
+      - "--task"
+      - "score"
+      - "--gpu-memory-utilization"
+      - "0.1"
+      - "--max-model-len"
+      - "4096"
+      - "--served-model-name"
+      - "mxbai-rerank"
+    resources:
+      requests: { cpu: "2", memory: 8Gi, "nvidia.com/gpu": 1 }
+      limits: { cpu: "4", memory: 16Gi, "nvidia.com/gpu": 1 }
+
+  router:
+    servedModelName: "router-llm"
+    modelId: "meta-llama/Llama-3.1-8B-Instruct"
+    port: 8000
+    args:
+      - "--tensor-parallel-size"
+      - "1"
+      - "--gpu-memory-utilization"
+      - "0.6"
+      - "--max-model-len"
+      - "16384"
+      - "--max-num-seqs"
+      - "128"
+      - "--dtype"
+      - "bfloat16"
+      - "--kv-cache-dtype"
+      - "fp8"
+      - "--enable-prefix-caching"
+      - "--served-model-name"
+      - "router-llm"
+    resources:
+      requests: { cpu: "4", memory: 24Gi, "nvidia.com/gpu": 1 }
+      limits: { cpu: "8", memory: 32Gi, "nvidia.com/gpu": 1 }
+
+  vision:
+    servedModelName: "vision-llm"
+    modelId: "meta-llama/Llama-3.2-11B-Vision-Instruct"
+    port: 8000
+    args:
+      - "--tensor-parallel-size"
+      - "1"
+      - "--gpu-memory-utilization"
+      - "0.7"
+      - "--max-model-len"
+      - "8192"
+      - "--limit-mm-per-prompt"
+      - "image=5"
+      - "--served-model-name"
+      - "vision-llm"
+    resources:
+      requests: { cpu: "4", memory: 32Gi, "nvidia.com/gpu": 1 }
+      limits: { cpu: "8", memory: 40Gi, "nvidia.com/gpu": 1 }
+
+# ---------------------------------------------------------------------------
+# Supporting infra
+# ---------------------------------------------------------------------------
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+  port: 6379
+  storage:
+    size: 10Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+postgres:
+  # Deploy a local StatefulSet (dev/test namespaces). In a real production
+  # namespace this is normally expected to be `enabled: false`, with
+  # `global.secretEnv.POSTGRES_URL` instead pointing at the org's managed
+  # Postgres (RDS-equivalent / on-prem managed cluster) — see values-prod.yaml.
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  port: 5432
+  database: chatdb
+  user: chatuser
+  password: chatpass # dev default only; override via global.secretEnv.POSTGRES_URL in real envs
+  storage:
+    size: 20Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+milvus:
+  # Standalone Milvus (same topology as docker-compose: milvus+etcd+minio),
+  # matching this app's current scale needs. In production, prefer the
+  # Milvus Operator / cluster-mode deployment for HA and independent scaling
+  # of query/data/index nodes — swap this block out for that operator's CR
+  # once it's available in the target cluster; the app only talks to
+  # MILVUS_HOST/MILVUS_PORT so the swap is transparent to every other service.
+  enabled: true
+  image:
+    repository: milvusdb/milvus
+    tag: "v2.4.9"
+  port: 19530
+  metricsPort: 9091
+  storage:
+    size: 100Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: 500m, memory: 2Gi }
+    limits: { cpu: "2", memory: 8Gi }
+  etcd:
+    image:
+      repository: quay.io/coreos/etcd
+      tag: "v3.5.9"
+    storage:
+      size: 10Gi
+      storageClassName: ""
+  minio:
+    image:
+      repository: localstack/localstack # matches docker-compose dev setup; swap for a real
+      tag: "3.0"                        # MinIO/S3-compatible image in staging/prod
+    storage:
+      size: 50Gi
+      storageClassName: ""
+
+retentionSweeper:
+  # CronJob only — the actual sweep script (query Postgres for conversations
+  # past retention_days, DROP PARTITION in Milvus, delete NFS files, mark
+  # status=purged) is out of scope here and must be added as its own image.
+  enabled: true
+  schedule: "0 3 * * *"
+  image:
+    repository: chat-retention-sweeper # placeholder: small Python/Node script image, not yet built
+    tag: "0.1.0"
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  config:
+    RETENTION_CHECK_QUERY: >-
+      SELECT id FROM conversations WHERE status = 'active' AND last_active_at < now() - (retention_days || ' days')::interval
+    DRY_RUN: "false"
+
+networkPolicies:
+  enabled: true
+  # Namespace the ingress controller's pods run in (so gateway/client can
+  # accept traffic from it). Adjust the label key/value to match whatever
+  # the org's ingress-nginx/other controller namespace is actually labeled
+  # with (`kubectl get ns --show-labels`).
+  ingressControllerNamespaceSelector:
+    key: "kubernetes.io/metadata.name"
+    value: "ingress-nginx"

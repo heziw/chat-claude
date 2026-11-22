@@ -1,0 +1,55 @@
+{{- if .Values.redis.enabled }}
+# Single-node Redis (StatefulSet, not a cluster) — sufficient for the
+# Celery broker/result-backend workload at current scale. Revisit (Redis
+# Sentinel/Cluster, or a managed Redis) if this becomes a reliability or
+# throughput bottleneck.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "redis" "ctx" $) | nindent 4 }}
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "redis" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "redis" "ctx" $) | nindent 8 }}
+    spec:
+      containers:
+        - name: redis
+          image: {{ include "chat-system.image" (dict "repository" .Values.redis.image.repository "tag" .Values.redis.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.port }}
+          args: ["--appendonly", "yes"]
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 15
+            periodSeconds: 20
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.redis.storage.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.storage.size }}
+{{- end }}

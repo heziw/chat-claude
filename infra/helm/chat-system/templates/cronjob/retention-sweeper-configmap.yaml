@@ -1,0 +1,22 @@
+{{- if .Values.retentionSweeper.enabled }}
+# Placeholder config for the retention-sweeper script (not written here —
+# out of scope for this infra change; a small Python/Node script needs to
+# be added separately under e.g. services/retention-sweeper/ and built into
+# `retentionSweeper.image`). It is expected to: query Postgres for
+# conversations whose retention_days has elapsed, DROP the matching Milvus
+# partition(s), delete the conversation's files under NFS, and flip
+# conversations.status to 'purged'.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-retention-sweeper-config
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "retention-sweeper" "ctx" $) | nindent 4 }}
+data:
+  RETENTION_CHECK_QUERY: {{ .Values.retentionSweeper.config.RETENTION_CHECK_QUERY | quote }}
+  DRY_RUN: {{ .Values.retentionSweeper.config.DRY_RUN | quote }}
+  MILVUS_HOST: {{ .Values.global.env.MILVUS_HOST | quote }}
+  MILVUS_PORT: {{ .Values.global.env.MILVUS_PORT | quote }}
+  NFS_ROOT_PATH: {{ .Values.global.env.NFS_ROOT_PATH | quote }}
+  MILVUS_COLLECTION: "doc_chunks"
+{{- end }}

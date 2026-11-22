@@ -1,0 +1,53 @@
+{{- if .Values.retentionSweeper.enabled }}
+# Daily sweep for conversations past their retention_days (CONTRACTS.md
+# `conversations.retention_days`, default 90). This CronJob manifest only;
+# `retentionSweeper.image` is a PLACEHOLDER — the actual sweep logic
+# (Postgres query -> Milvus DROP PARTITION -> NFS file delete -> mark
+# status=purged) is a separate small script/image to be built and pushed
+# to the internal registry, not written as part of this infra change.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: retention-sweeper
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "retention-sweeper" "ctx" $) | nindent 4 }}
+spec:
+  schedule: {{ .Values.retentionSweeper.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "chat-system.selectorLabels" (dict "component" "retention-sweeper" "ctx" $) | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: retention-sweeper
+              image: {{ include "chat-system.image" (dict "repository" .Values.retentionSweeper.image.repository "tag" .Values.retentionSweeper.image.tag "ctx" $) }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              envFrom:
+                - configMapRef:
+                    name: {{ .Release.Name }}-shared-env
+                - secretRef:
+                    name: {{ .Release.Name }}-shared-secret
+                - configMapRef:
+                    name: {{ .Release.Name }}-retention-sweeper-config
+              resources:
+                {{- toYaml .Values.retentionSweeper.resources | nindent 16 }}
+              volumeMounts:
+                - name: nfs-raw-files
+                  mountPath: {{ .Values.nfs.mountPath }}
+                  readOnly: false
+          volumes:
+            - name: nfs-raw-files
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-nfs-raw-files
+{{- end }}

@@ -1,0 +1,52 @@
+# Celery worker consuming the "ingestion" queue (parse -> chunk -> embed ->
+# write Milvus/Postgres/NFS side-store). Same image as ingestion-service,
+# different command. No Service: this Deployment serves no HTTP traffic.
+# Fixed replica count for now (no HPA) per the plan's current scope.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker-ingestion
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "celery-worker-ingestion" "ctx" $) | nindent 4 }}
+spec:
+  replicas: {{ .Values.celeryWorkers.ingestion.replicas }}
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "celery-worker-ingestion" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "celery-worker-ingestion" "ctx" $) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-worker-ingestion
+          image: {{ include "chat-system.image" (dict "repository" .Values.celeryWorkers.ingestion.image.repository "tag" .Values.celeryWorkers.ingestion.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: {{ toYaml .Values.celeryWorkers.ingestion.command | nindent 12 }}
+          args: {{ toYaml .Values.celeryWorkers.ingestion.args | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-shared-env
+            - secretRef:
+                name: {{ .Release.Name }}-shared-secret
+          resources:
+            {{- toYaml .Values.celeryWorkers.ingestion.resources | nindent 12 }}
+          {{- if .Values.celeryWorkers.ingestion.nfs.mount }}
+          volumeMounts:
+            - name: nfs-raw-files
+              mountPath: {{ .Values.nfs.mountPath }}
+              {{- if .Values.celeryWorkers.ingestion.nfs.subPath }}
+              subPath: {{ .Values.celeryWorkers.ingestion.nfs.subPath }}
+              {{- end }}
+              readOnly: {{ .Values.celeryWorkers.ingestion.nfs.readOnly }}
+          {{- end }}
+      {{- if .Values.celeryWorkers.ingestion.nfs.mount }}
+      volumes:
+        - name: nfs-raw-files
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nfs-raw-files
+      {{- end }}

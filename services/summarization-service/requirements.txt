@@ -1,0 +1,17 @@
+# pymilvus imports pkg_resources directly; pin setuptools<81 since newer
+# releases are dropping pkg_resources. (Same fix as ingestion-service.)
+setuptools<81
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+celery==5.4.0
+# redis>=6.1.0 required: older redis-py releases have a VersionMismatch
+# conflict with celery/kombu (discovered in ingestion-service).
+redis>=6.1.0
+psycopg2-binary==2.9.10
+pymilvus==2.4.9
+# pymilvus -> environs depends on marshmallow's __version_info__, which was
+# removed in marshmallow 4.x; pin to the last 3.x line to avoid breaking
+# pymilvus's import chain (same fix as ingestion-service).
+marshmallow==3.23.1
+httpx==0.28.1
+pydantic-settings==2.7.0
