@@ -1,4 +1,9 @@
 fastapi==0.115.0
+# Serves /docs and /redoc from bundled static assets instead of FastAPI's
+# CDN defaults (cdn.jsdelivr.net) -- this is an air-gapped system, so those
+# pages would otherwise render blank with no internet access. See
+# app/main.py's FastAPIOffline usage.
+fastapi-offline==1.7.7
 uvicorn[standard]==0.30.6
 pymilvus==2.4.9
 httpx==0.27.2

@@ -31,8 +31,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
-from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi_offline import FastAPIOffline
 from pydantic import BaseModel
 
 from app import db, structured_client, summarization_client
@@ -50,7 +50,7 @@ from app.retrieval import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="retrieval-orchestrator", version="0.1.0")
+app = FastAPIOffline(title="retrieval-orchestrator", version="0.1.0")
 
 
 class HistoryMessage(BaseModel):

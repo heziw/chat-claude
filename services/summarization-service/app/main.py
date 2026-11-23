@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 
 from celery.result import AsyncResult
-from fastapi import FastAPI
+from fastapi_offline import FastAPIOffline
 from pydantic import BaseModel
 
 from app.tasks import celery_app, summarize_file_task
@@ -25,7 +25,7 @@ from app.tasks import celery_app, summarize_file_task
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="summarization-service", version="0.1.0")
+app = FastAPIOffline(title="summarization-service", version="0.1.0")
 
 # Celery task states -> the status vocabulary this API exposes
 # (pending | processing | ready | failed), per CONTRACTS.md.

@@ -33,7 +33,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
+from fastapi_offline import FastAPIOffline
 from pydantic import BaseModel
 
 from app import db
@@ -50,7 +51,7 @@ from app.sandbox import SandboxSession, SandboxTimeoutError
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="structured-data-agent", version="0.1.0")
+app = FastAPIOffline(title="structured-data-agent", version="0.1.0")
 
 
 class StructuredQueryRequest(BaseModel):

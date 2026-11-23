@@ -13,8 +13,9 @@ import uuid
 from pathlib import Path
 
 from celery.result import AsyncResult
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from fastapi_offline import FastAPIOffline
 
 from app import db, milvus_client
 from app.config import settings
@@ -23,7 +24,7 @@ from app.tasks import celery_app, lookup_file_id_for_task, process_file_task, re
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="ingestion-service", version="0.1.0")
+app = FastAPIOffline(title="ingestion-service", version="0.1.0")
 
 
 def _file_type_from_name(filename: str) -> str:

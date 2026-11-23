@@ -2,6 +2,11 @@
 # releases are dropping pkg_resources. (Same fix as ingestion-service.)
 setuptools<81
 fastapi==0.115.6
+# Serves /docs and /redoc from bundled static assets instead of FastAPI's
+# CDN defaults (cdn.jsdelivr.net) -- this is an air-gapped system, so those
+# pages would otherwise render blank with no internet access. See
+# app/main.py's FastAPIOffline usage.
+fastapi-offline==1.7.7
 uvicorn[standard]==0.34.0
 celery==5.4.0
 # redis>=6.1.0 required: older redis-py releases have a VersionMismatch
