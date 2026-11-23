@@ -27,15 +27,22 @@ place of Postgres's `RETURNING *` (see shared/CONTRACTS.md).
 - `conversations/` — CRUD for `conversations` + `GET /:id/messages`. Deleting
   a conversation also calls ingestion-service's
   `DELETE /conversations/:id/files` to clean up Milvus/NFS/side-store data.
+  Also owns `PATCH /:id/system-prompt`, the conversation's custom
+  instruction (see `shared/CONTRACTS.md` "system_prompt") — an empty/omitted
+  value clears it back to `null`.
 - `files/` — `POST /:id/files` streams a multipart upload to
   `ingestion-service POST /ingest` (via a short-lived temp file + `form-data`,
   no in-memory buffering of the whole file) and
   `GET /:id/files/:fileId/status` proxies `GET /ingest/{task_id}/status`.
-- `query/` — `POST /:id/query` proxies `POST /query` on
-  retrieval-orchestrator, forwards the `text/event-stream` response to the
-  client byte-for-byte, and — in parallel — parses `token`/`citation`/`done`
-  frames to persist the user question up front and the assistant reply
-  (content + citations) once `done` arrives.
+- `query/` — `POST /:id/query` fetches the conversation's `system_prompt`,
+  forwards it (plus the request's optional `images`, up to 4 base64 data
+  URLs) to `POST /query` on retrieval-orchestrator, forwards the
+  `text/event-stream` response to the client byte-for-byte, and — in
+  parallel — parses `token`/`citation`/`done` frames (the `status`/
+  `reasoning` events pass through untouched, unparsed) to persist the user
+  question + attachments up front and the assistant reply (content +
+  citations) once `done` arrives. `main.ts` raises the default Express body
+  limit to 25mb to fit base64-encoded images.
 - `common/database` — single `mssql.ConnectionPool`-backed `DatabaseService`.
 - `common/http` — `IngestionClient` / `RetrievalClient`, thin axios wrappers
   around the two upstream Python services.
@@ -88,8 +95,9 @@ local dev container) and, for full end-to-end flows, `ingestion-service` on
 | POST | `/conversations` | JWT | `{title?, retentionDays?}`. |
 | GET | `/conversations/:id` | JWT | |
 | DELETE | `/conversations/:id` | JWT | Also purges ingestion-service data. |
+| PATCH | `/conversations/:id/system-prompt` | JWT | `{system_prompt?}` — empty/omitted clears it. |
 | GET | `/conversations/:id/messages` | JWT | |
 | POST | `/conversations/:id/files` | JWT | multipart `file` field → `{task_id, file_id}`. |
 | GET | `/conversations/:id/files/:fileId/status` | JWT | optional `?taskId=` query param. |
-| POST | `/conversations/:id/query` | JWT | `{question}` → SSE (`token`/`citation`/`done`). |
+| POST | `/conversations/:id/query` | JWT | `{question, thinking_level?, images?}` → SSE (`token`/`citation`/`status`/`reasoning`/`done`). `question` may be empty only if `images` is non-empty. |
 | GET | `/health` | — | liveness probe. |

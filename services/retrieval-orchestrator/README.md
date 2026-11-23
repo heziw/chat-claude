@@ -37,7 +37,33 @@ otherwise the heuristic decides. Each route has its own SSE handler in
 `app/main.py` (`_handle_general` / `_handle_factual` / `_handle_structured`
 / `_handle_summarize` / `_handle_multi`), but all five speak the same
 `token`/`citation`/`done` wire format — "general" just never emits a
-`citation` event (there's no document to cite).
+`citation` event (there's no document to cite). structured/summarize/multi
+additionally emit `status` (plain-text progress labels, e.g. "מתכנן ומריץ
+שאילתה על הנתונים...") and one `reasoning` event each (the pandas plan's
+steps / which file got summarized / the sub-questions a comparison was split
+into, plus a judge verdict when `thinking_level="deep"` ran one) — ephemeral,
+not persisted in MSSQL, purely for the client's live-progress UI. See
+CONTRACTS.md's `status`/`reasoning` event docs for the full payload shapes.
+
+## `system_prompt` and `images` (not part of routing itself)
+
+- **`system_prompt`** — the conversation's custom instruction (set via the
+  client's settings panel, stored in `conversations.system_prompt`, fetched
+  by the gateway and forwarded on every `/query` call). Threaded into
+  *every* route that actually generates text: a real system-role message
+  for general/factual/multi (`generation.py:generate_stream`), folded as an
+  instruction line into the plan-generation prompt for structured
+  (`structured-data-agent` has no system-role concept), and into the map
+  instruction for summarize. `classify_query` itself never looks at it —
+  routing is driven by `question` only.
+- **`images`** — base64 data URLs attached to a chat message, only ever used
+  by the **general** route (`_handle_general`). When present, real mode
+  routes the call to `VLLM_VISION_URL`/`VLLM_VISION_MODEL` instead of
+  `VLLM_GENERATION_URL`, as an OpenAI-style multimodal `user` message — a
+  separate deployment since there's no guarantee the main generation model
+  is itself multimodal. Unrelated to ingestion-service's OCR/embedded-image-
+  captioning pipeline (different services, different purpose: this is
+  synchronous single-message vision chat, not document indexing).
 
 ### Why "general" is its own route, not just "factual" with no context
 
@@ -168,7 +194,7 @@ rather than crashing the request.
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/query` | `{conversation_id, question, history?}` → `text/event-stream` (`token`/`citation`/`done`) |
+| POST | `/query` | `{conversation_id, question, history?, thinking_level?, system_prompt?, images?}` → `text/event-stream` (`token`/`citation`/`status`/`reasoning`/`done`) |
 | GET | `/files/{file_id}/schema` | debug proxy to structured-data-agent's `/schema/{file_id}`; 502 with a clear message if that service is unreachable |
 | GET | `/healthz` | liveness probe |
 

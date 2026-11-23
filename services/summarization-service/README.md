@@ -30,7 +30,10 @@ Milvus), the task fails cleanly and `GET /summarize/{task_id}` reports it.
    router model, reused here for its cheap-and-fast profile). If the
    request's `question` carries a specific focus rather than a bare
    "summarize this" (`_focus_text`), the map instruction is built to center
-   on it instead of producing a generic summary.
+   on it instead of producing a generic summary. If the request carries a
+   `system_prompt` (the conversation's custom instruction, forwarded from
+   retrieval-orchestrator — see CONTRACTS.md "system_prompt"), it's appended
+   to the same map instruction, alongside the focus.
 2. **Reduce**: if more than one map-summary came out, they're grouped again
    (`REDUCE_GROUP_SIZE=5` / `REDUCE_GROUP_MAX_CHARS=6000`) and merged,
    recursively, until one summary remains — capped at `REDUCE_MAX_DEPTH=3`
@@ -97,7 +100,7 @@ already `ready` (ingested) in some conversation to summarize.
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/summarize` | `{file_id, thinking_level?, question?}` → `{task_id}` (202) |
+| POST | `/summarize` | `{file_id, thinking_level?, question?, system_prompt?}` → `{task_id}` (202) |
 | GET | `/summarize/{task_id}` | `{status, summary?, judge?}` |
 | GET | `/health` | liveness probe |
 

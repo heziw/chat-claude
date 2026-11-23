@@ -27,24 +27,79 @@ Both pipelines are dispatched asynchronously via Celery (`REDIS_URL` as
 broker+backend, default queue `ingestion` — see "Queue name" below); `POST
 /ingest` returns `{task_id, file_id}` immediately (202) after saving the raw
 file to NFS and creating the `file_metadata` row with `index_status=pending`.
+`index_status` progresses through real sub-stages as the task runs
+(`pending → parsing → chunking → embedding → indexing` for pdf/docx/image,
+`pending → parsing → writing` for xlsx/csv/json) so the client can show
+actual progress rather than a single opaque "processing" spinner — only
+`ready`/`failed` are ever branched on elsewhere in the system, the
+in-progress vocabulary is free to keep growing.
 
 ## Chunking (pdf/docx/image path)
 
 - **PDF**: per-page text extraction (`pypdf` → `pdfplumber` fallback), OCR
-  via `pytesseract` for pages with no extractable text. `source_ref` =
-  `"עמוד N"`.
+  via `pytesseract` for pages with **no extractable text at all** (a
+  whole-page scan). `source_ref` = `"עמוד N"`. On top of that, every page
+  where real text *was* extracted (not the OCR fallback) also gets its
+  embedded images captioned — see "Embedded-image captioning" below.
 - **DOCX**: heading-aware — paragraphs are grouped into sections by Word's
   `Heading N` styles so a chunk never straddles a heading boundary.
   `source_ref` = `"סעיף: <heading>"` or `"פסקה N"` if there's no heading.
-- **Image**: OCR only (`pytesseract`, `lang="heb+eng"`). `source_ref` =
-  `"תמונה"`.
-- All three share `_chunk_text()`: ~500 words per chunk, 50-word overlap,
-  snapped to paragraph boundaries where possible.
+- **Image**: OCR only, and **only for `tif`/`tiff`** (`pytesseract`,
+  `lang="heb+eng"`). `source_ref` = `"תמונה"`. Any other image extension
+  (`jpg`/`jpeg`/`png`/`bmp`/`gif`/`webp`) is treated as "not a scan" and
+  produces zero chunks without attempting OCR at all — see "TIFF-only OCR"
+  below. In practice the client no longer routes these to `/ingest` in the
+  first place (they go through the chat-image-attachment/vision flow
+  instead, see `retrieval-orchestrator/README.md`); this is a defensive
+  no-op for anything that reaches the endpoint directly anyway.
+- All of the above share `_chunk_text()`: ~500 words per chunk, 50-word
+  overlap, snapped to paragraph boundaries where possible.
 - Any of the above is allowed to produce **zero chunks** (e.g. tesseract not
-  installed, or a scanned page with no usable OCR output) — the file still
-  gets marked `ready` with `chunks: 0`, never `failed`, and a warning is
-  logged. `parse_file()` raises `NotImplementedError` for any file_type not
-  in `{pdf, docx, image}`.
+  installed, a scanned page with no usable OCR output, or a non-scan image)
+  — the file still gets marked `ready` with `chunks: 0`, never `failed`, and
+  a warning is logged. `parse_file()` raises `NotImplementedError` for any
+  file_type not in `{pdf, docx, image-family}`.
+
+## TIFF-only OCR (`app/parsing.py: _OCR_SCAN_IMAGE_EXTENSIONS`)
+
+OCR is now only attempted for `tif`/`tiff`, not every image extension.
+Rationale: TIFF is overwhelmingly a scanner/fax/archival output format,
+while a camera photo or a screenshot (png/jpg/gif/bmp/webp) almost never has
+meaningful document text to recover — running OCR on those was pure wasted
+work that always (or near-always) produced zero usable chunks anyway. Those
+other formats are meant for genuine chat-image attachment instead (see
+`retrieval-orchestrator/README.md`'s "`images`" section) — a fundamentally
+different, synchronous, non-indexed flow.
+
+## Embedded-image captioning (`app/vision.py`, `app/parsing.py: _caption_embedded_images`)
+
+A photo/chart/diagram embedded **alongside real running text** on a PDF page
+is otherwise completely invisible to RAG — the per-page OCR fallback above
+only ever triggers when a page has *no* text layer at all (a whole-page
+scan), which is a different situation entirely. For every page where real
+text was extracted (via pypdf or pdfplumber, not OCR):
+
+1. `page.images` (pypdf) enumerates the embedded images on that page.
+2. Anything smaller than `_MIN_EMBEDDED_IMAGE_PX` (80px) in **both**
+   dimensions is skipped — almost always a logo/bullet-icon/decorative
+   marker, not worth a vision-model call.
+3. Up to `_MAX_EMBEDDED_IMAGES_PER_PAGE` (5) remaining images per page are
+   sent to `app/vision.py: caption_image()` — a short text description via
+   `VLLM_VISION_URL`/`VLLM_VISION_MODEL` (OpenAI-style multimodal
+   `/chat/completions`, same endpoint shape retrieval-orchestrator uses for
+   chat-image attachments, but a separate call site/deployment-agnostic
+   client). This is the first real use of `VLLM_VISION_URL` in this
+   service — previously an unused placeholder.
+4. Each caption becomes its own `Chunk` with a distinct
+   `source_ref = "עמוד N (תמונה מוטבעת)"`, so a citation pointing at a
+   described image reads clearly as such rather than looking like it came
+   from the page's running text.
+
+Best-effort throughout, same policy as OCR: a page pypdf can't read images
+from, or a vision-model call that fails, just means fewer/no captions for
+that page — never a failed ingestion. Mock mode (`caption_image`) returns a
+deterministic `"[תיאור מדומה של תמונה מוטבעת, N bytes]"` placeholder, no
+network call.
 
 ## Mock mode
 

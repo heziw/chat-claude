@@ -41,7 +41,11 @@ that kind of question; a short explicit plan doesn't.
    - **Real mode**: asks `VLLM_ROUTER_URL` for a JSON plan
      (`{"steps": [{"description", "code"}, ...]}`); falls back to the
      original single-step generator if the router is unreachable or
-     returns something unparseable.
+     returns something unparseable. If the request carries a `system_prompt`
+     (the conversation's custom instruction, forwarded from
+     retrieval-orchestrator — see CONTRACTS.md "system_prompt"), it's folded
+     in as an extra instruction line in the plan prompt; mock mode ignores
+     it (the keyword heuristic has no use for free-text instructions).
 3. `app/sandbox.py: SandboxSession` executes the steps **in order, in one
    persistent namespace** — step 2 can see the column step 1 added. This is
    the piece that makes multi-step plans actually work: a plain sequence of
@@ -124,5 +128,5 @@ the service that will 404 if the two disagree).
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/schema/{file_id}` | columns/dtypes/sample rows for a structured file |
-| POST | `/structured-query` | `{file_id, question}` → `{answer, code_executed, result_table, steps}`; 404 if no side-store found, 422 if any plan step fails twice (original + 1 retry) |
+| POST | `/structured-query` | `{file_id, question, thinking_level?, system_prompt?}` → `{answer, code_executed, result_table, steps, judge?}`; 404 if no side-store found, 422 if any plan step fails twice (original + 1 retry) |
 | GET | `/health` | liveness probe |

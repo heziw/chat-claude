@@ -62,6 +62,39 @@ for whoever touches this file next:
   parsing for the `citation` event (always a genuine `{...}` object), never
   for `token`.
 
+## Chat screen (`features/conversations/chat/`)
+
+Beyond message history and file upload, the composer (`chat.component.ts`)
+has grown a few more pieces, all driven by `ChatService`'s signals:
+
+- **`thinking_level` selector** — "fast"/"standard"/"deep", sent with every
+  question; see `shared/CONTRACTS.md` "thinking_level" for what each level
+  actually changes server-side.
+- **Live status line + reasoning panel** — while a question is being
+  answered, `processingStatus()` surfaces the backend's `status` SSE events
+  as a short progress label; once answered, a collapsible "🧠" panel (only
+  shown when the route emitted a `reasoning` event) shows the route's actual
+  work — the pandas plan's steps, which file got summarized, the
+  sub-questions a comparison was split into — plus a judge verdict when
+  `thinking_level="deep"` ran one. Both are ephemeral: reloading an old
+  conversation shows neither, only the final answer text + citations.
+- **Conversation settings panel ("⚙️")** — edits the conversation's custom
+  `system_prompt` (`PATCH /conversations/:id/system-prompt`), a persistent
+  instruction resent on every future question in that conversation.
+- **One attach button, routed by extension** (`handleFiles` in
+  `chat.component.ts`) — `pdf`/`docx`/`xlsx`/`csv`/`json`/`tif`/`tiff` go
+  through the existing `uploadFile()` → ingestion-service flow; any other
+  `image/*` is base64-encoded client-side (`FileReader`, capped at 4 images /
+  4MB each) and sent as `images` on the next question instead — synchronous,
+  never indexed, only meaningful in a conversation with no files yet (see
+  `retrieval-orchestrator/README.md`'s "`images`" section). Dropped files are
+  routed the same way `onDrop` → `handleFiles`.
+- **Quick-prompt chips** — a fixed row of canned questions ("📝 סכם", "📊 נתח
+  נתונים", ...) that insert text into the composer, combinable with
+  free-typed text. These are plain client-side strings, not a separate
+  backend concept — they work because the usual `classify_query` routing
+  picks up their keywords exactly as if the user had typed them.
+
 ## Env / config
 
 `src/environments/environment.ts` (prod) and `environment.development.ts`

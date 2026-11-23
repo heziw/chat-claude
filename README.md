@@ -89,6 +89,38 @@ the travel policy and the expense policy") when several documents exist.
   something's missing, that document is fetched directly (bypassing the
   decomposition) and merged in before generating the answer.
 
+## Beyond routing: system prompts, image chat, live progress, richer documents
+
+A few capabilities layered on top of the 5 routes above, all documented in
+full in `shared/CONTRACTS.md`:
+
+- **Per-conversation system prompt** — an optional custom instruction set via
+  a "⚙️ settings" panel in the client, stored in `conversations.system_prompt`,
+  and forwarded on every question in that conversation to whichever route
+  actually generates the answer (a real system-role message for
+  general/factual/multi; folded into the prompt-builder for structured/
+  summarize, which have no system-role concept of their own).
+- **Image chat attachments** — a photo attached to a message in a
+  conversation with no files yet is sent straight to a dedicated vision model
+  (`VLLM_VISION_URL`) for genuine multimodal Q&A ("what's in this picture?").
+  This is unrelated to document OCR (below): it's synchronous, ephemeral, and
+  never indexed.
+- **Live status + reasoning panel** — the client shows a progress line while
+  a question is being answered (`status` SSE events: "searching...",
+  "planning a query over the data...", ...) and, once answered, an
+  expandable "🧠" panel showing the route's actual work — the pandas plan's
+  steps, the sub-questions a comparison was split into, or which file got
+  summarized — plus a judge's verdict when `thinking_level="deep"` ran one.
+- **One attach button, routed by extension** — `pdf`/`docx`/`xlsx`/`csv`/
+  `json`/`tif`/`tiff` go through ingestion/RAG; any other image goes through
+  the chat-attachment flow above instead. TIFF is treated as a document
+  because it's almost always scanner/fax output, unlike a camera photo.
+- **Embedded-image captioning in PDFs** — a photo/chart/diagram embedded
+  alongside real text on a PDF page (not a whole-page scan, which OCR
+  already handles) is captioned by the same vision model and indexed as its
+  own citable chunk — otherwise that visual content would be completely
+  invisible to RAG. Tiny images (likely logos/icons) are skipped.
+
 ## Local dev (no GPU required)
 
 Every LLM call (embeddings, generation, reranking, routing) goes through a
