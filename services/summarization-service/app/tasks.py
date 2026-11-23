@@ -43,7 +43,7 @@ def summarize_file_task(self, file_id: str, thinking_level: str = "standard", qu
     """Map-reduce summarize every Milvus chunk belonging to file_id.
 
     Steps:
-      1. Look up conversation_id / milvus_partition for file_id in Postgres
+      1. Look up conversation_id / milvus_partition for file_id in MSSQL
          file_metadata (written by ingestion-service).
       2. Fetch all chunks for file_id from that partition in doc_chunks,
          ordered by their true numeric chunk index.

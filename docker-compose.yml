@@ -1,21 +1,38 @@
-version: "3.8"
-
 services:
-  postgres:
-    image: postgres:16-alpine
+  # Local dev stand-in only -- production points MSSQL_* at the existing
+  # enterprise SQL Server instead (see shared/CONTRACTS.md). No Helm
+  # manifest deploys this in production.
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
-      POSTGRES_USER: chatuser
-      POSTGRES_PASSWORD: chatpass
-      POSTGRES_DB: chatdb
-    ports: ["5432:5432"]
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "ChatApp!Dev123"
+      MSSQL_PID: Developer
+    ports: ["1433:1433"]
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./infra/docker/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - mssqldata:/var/opt/mssql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chatuser -d chatdb"]
-      interval: 5s
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1'"]
+      interval: 10s
       timeout: 5s
       retries: 10
+
+  # One-shot: creates the chatdb database + schema, then exits. Re-running
+  # docker compose up is idempotent (mssql-init.sql uses IF NOT EXISTS).
+  mssql-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      mssql:
+        condition: service_healthy
+    volumes:
+      - ./infra/docker/mssql-init.sql:/init/mssql-init.sql:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        SQLCMD=/opt/mssql-tools18/bin/sqlcmd; [ -x "$$SQLCMD" ] || SQLCMD=/opt/mssql-tools/bin/sqlcmd;
+        $$SQLCMD -C -S mssql -U sa -P "ChatApp!Dev123" -Q "IF DB_ID('chatdb') IS NULL CREATE DATABASE chatdb" &&
+        $$SQLCMD -C -S mssql -U sa -P "ChatApp!Dev123" -d chatdb -i /init/mssql-init.sql
+    restart: "no"
 
   redis:
     image: redis:7-alpine
@@ -58,7 +75,7 @@ services:
       - milvusdata:/var/lib/milvus
 
 volumes:
-  pgdata:
+  mssqldata:
   etcddata:
   miniodata:
   milvusdata:

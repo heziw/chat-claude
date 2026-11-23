@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
 import { IngestionClient } from '../common/http/ingestion.client';
 import { ConversationEntity } from './conversation.entity';
@@ -29,10 +30,10 @@ export class ConversationsService {
     retentionDays?: number,
   ): Promise<ConversationEntity> {
     const result = await this.db.query<ConversationEntity>(
-      `INSERT INTO conversations (user_id, title, retention_days)
-       VALUES ($1, COALESCE($2, 'שיחה חדשה'), COALESCE($3, 90))
-       RETURNING *`,
-      [userId, title, retentionDays],
+      `INSERT INTO conversations (id, user_id, title, retention_days)
+       OUTPUT INSERTED.*
+       VALUES ($1, $2, COALESCE($3, N'שיחה חדשה'), COALESCE($4, 90))`,
+      [randomUUID(), userId, title, retentionDays],
     );
     return result.rows[0];
   }
@@ -55,7 +56,7 @@ export class ConversationsService {
 
   async touchLastActive(conversationId: string): Promise<void> {
     await this.db.query(
-      `UPDATE conversations SET last_active_at = now() WHERE id = $1`,
+      `UPDATE conversations SET last_active_at = SYSDATETIMEOFFSET() WHERE id = $1`,
       [conversationId],
     );
   }
@@ -65,7 +66,7 @@ export class ConversationsService {
     await this.getOwned(conversationId, userId);
 
     // Clean up ingestion-service owned data (Milvus partition, NFS files,
-    // side-stores) first; if it fails we still proceed to drop the Postgres
+    // side-stores) first; if it fails we still proceed to drop the MSSQL
     // row (and log) rather than leaving the conversation un-deletable.
     await this.ingestionClient.deleteConversationFiles(conversationId);
 

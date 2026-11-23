@@ -81,7 +81,7 @@ NFS_ROOT_PATH=/absolute/path/to/data/nfs-raw-files .venv/bin/uvicorn app.main:ap
 NFS_ROOT_PATH=/absolute/path/to/data/nfs-raw-files .venv/bin/celery -A app.tasks worker --loglevel=info
 ```
 
-Requires Postgres, Redis, and Milvus reachable (see repo-root
+Requires MSSQL, Redis, and Milvus reachable (see repo-root
 `docker-compose.yml`).
 
 ## Endpoints

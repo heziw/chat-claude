@@ -88,9 +88,15 @@ _MULTI_KEYWORDS = ["השווה", "השוואה", "לעומת", "בין", "compar
 
 
 def classify_query(question: str, structured_file_count: int = 0, embedding_file_count: int = 0) -> str:
-    """Classify `question` into one of 4 routes.
+    """Classify `question` into one of 5 routes.
 
     Precedence (most to least specific signal):
+    0. "general" -- hard override: the conversation has **no files at all**
+       (neither structured nor embedding-indexed). None of the other 4
+       routes make sense with nothing to retrieve/summarize/compute on, so
+       this short-circuits before even attempting LLM/heuristic
+       classification (cheap, decisive, and saves a pointless router call
+       in real mode) -- see app/main.py:_handle_general.
     1. "summarize" -- summary keywords present ("סכם"/"תמצת"/"summary"/...).
     2. "multi" -- comparison keywords present ("השווה"/"compare"/"בין...ל"/...)
        AND there's more than one embedding-based (pdf/docx/image) file to
@@ -102,12 +108,20 @@ def classify_query(question: str, structured_file_count: int = 0, embedding_file
        reasonable default") -- the keyword list is used in mock mode to
        pick a better sub-score when deciding between routes via the LLM,
        but isn't a hard requirement here.
-    4. "factual" -- default (the original, already-working path).
+    4. "factual" -- default (the original, already-working path). Only
+       reachable once rule 0 has ruled out "no files at all", so an empty
+       retrieval result here means "files exist but none matched/indexed
+       yet", not "no files were ever uploaded" (see generation.py's
+       `context_chunks is None` vs `[]` distinction).
 
-    In real mode (MOCK_LLM=false) the router LLM is consulted first; its
-    answer only overrides the heuristic above if it parses cleanly to one
-    of the 4 known categories, otherwise falls back to the heuristic.
+    In real mode (MOCK_LLM=false) the router LLM is consulted first (for
+    rules 1-4 only); its answer only overrides the heuristic above if it
+    parses cleanly to one of the 4 known categories, otherwise falls back
+    to the heuristic.
     """
+    if structured_file_count == 0 and embedding_file_count == 0:
+        return "general"
+
     intent = None
     if not settings.MOCK_LLM:
         intent = _llm_classify(question)

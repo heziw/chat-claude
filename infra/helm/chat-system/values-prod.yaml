@@ -14,7 +14,11 @@ global:
     OIDC_CLIENT_ID: "chat-gateway" # CHANGE-ME
     AUTH_MODE: "oidc"
   secretEnv:
-    POSTGRES_URL: "CHANGE-ME-use-external-secret-manager"
+    MSSQL_HOST: "CHANGE-ME-use-external-secret-manager" # the org's existing enterprise SQL Server
+    MSSQL_PORT: "1433" # CHANGE-ME if different
+    MSSQL_DATABASE: "CHANGE-ME-use-external-secret-manager"
+    MSSQL_USER: "CHANGE-ME-use-external-secret-manager"
+    MSSQL_PASSWORD: "CHANGE-ME-use-external-secret-manager"
     REDIS_URL: "CHANGE-ME-use-external-secret-manager"
     JWT_SECRET: "CHANGE-ME-use-external-secret-manager"
     OIDC_CLIENT_SECRET: "CHANGE-ME-use-external-secret-manager"
@@ -82,9 +86,9 @@ vllm:
     repository: vllm-openai
     tag: "v0.6.3" # CHANGE-ME to the version validated/bundled through infra/offline-bundle
 
-# Production: use the org's externally managed Postgres instead of this
+# Production: use the org's existing enterprise SQL Server instead of this
 # chart's local StatefulSet.
-postgres:
+mssql:
   enabled: false
 
 # Production: prefer the Milvus Operator / cluster-mode deployment (see

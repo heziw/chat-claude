@@ -1,16 +1,22 @@
-"""Postgres access for the `file_metadata` table (see postgres-init.sql /
-CONTRACTS.md for the schema). Uses psycopg2 with a short-lived connection
-per call — simple and safe to use both from the FastAPI process and from
-Celery worker processes (which don't share connections with the API).
+"""MSSQL access for the `file_metadata` table (see infra/docker/mssql-init.sql /
+CONTRACTS.md for the schema). Uses python-tds (pytds) with a short-lived
+connection per call — simple and safe to use both from the FastAPI process
+and from Celery worker processes (which don't share connections with the
+API).
+
+IDs are generated in the application (uuid4 strings) rather than relying on
+a DB-side default/RETURNING, per CONTRACTS.md's "IDs created in the
+application, not the DB" rule — MSSQL has no `RETURNING`, only
+`OUTPUT INSERTED.*`, and generating the id up-front avoids needing that.
 """
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import contextmanager
 from typing import Any
 
-import psycopg2
-import psycopg2.extras
+import pytds
 
 from app.config import settings
 
@@ -19,7 +25,14 @@ logger = logging.getLogger(__name__)
 
 @contextmanager
 def get_conn():
-    conn = psycopg2.connect(settings.POSTGRES_URL)
+    conn = pytds.connect(
+        server=settings.MSSQL_HOST,
+        port=settings.MSSQL_PORT,
+        database=settings.MSSQL_DATABASE,
+        user=settings.MSSQL_USER,
+        password=settings.MSSQL_PASSWORD,
+        as_dict=True,
+    )
     try:
         yield conn
         conn.commit()
@@ -40,19 +53,18 @@ def create_file_metadata(
     """Insert a new file_metadata row with index_status='pending'.
     Returns the generated file_id (UUID string).
     """
+    file_id = str(uuid.uuid4())
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO file_metadata
-                    (conversation_id, original_name, file_type, nfs_path, size_bytes, index_status)
-                VALUES (%s, %s, %s, %s, %s, 'pending')
-                RETURNING id
+                    (id, conversation_id, original_name, file_type, nfs_path, size_bytes, index_status)
+                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
                 """,
-                (conversation_id, original_name, file_type, nfs_path, size_bytes),
+                (file_id, conversation_id, original_name, file_type, nfs_path, size_bytes),
             )
-            file_id = cur.fetchone()[0]
-    return str(file_id)
+    return file_id
 
 
 def update_index_status(
@@ -85,7 +97,7 @@ def update_index_status(
 
 def get_file_metadata(file_id: str) -> dict[str, Any] | None:
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute("SELECT * FROM file_metadata WHERE id = %s", (file_id,))
             row = cur.fetchone()
             return dict(row) if row else None
@@ -93,7 +105,7 @@ def get_file_metadata(file_id: str) -> dict[str, Any] | None:
 
 def list_files_for_conversation(conversation_id: str) -> list[dict[str, Any]]:
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 "SELECT * FROM file_metadata WHERE conversation_id = %s",
                 (conversation_id,),

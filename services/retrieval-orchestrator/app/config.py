@@ -13,7 +13,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Core infra
-    POSTGRES_URL: str = "postgresql://chatuser:chatpass@localhost:5432/chatdb"
+    MSSQL_HOST: str = "localhost"
+    MSSQL_PORT: int = 1433
+    MSSQL_DATABASE: str = "chatdb"
+    MSSQL_USER: str = "sa"
+    MSSQL_PASSWORD: str = "ChatApp!Dev123"
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 19530
     REDIS_URL: str = "redis://localhost:6379/0"

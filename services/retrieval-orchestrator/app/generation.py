@@ -15,7 +15,15 @@ mock/real contract as the rest of the system (see shared/CONTRACTS.md
 ``context_chunks`` is accepted in addition to ``prompt`` only so the mock
 path can build a readable "based on" summary without re-parsing the
 rendered prompt text; real mode ignores it (the prompt already contains
-the context).
+the context). Its three possible shapes mean three different things to the
+mock path -- real mode doesn't need the distinction since it just forwards
+whatever `prompt` says:
+  - ``None``: no retrieval was even attempted -- the "general" route (no
+    files at all in the conversation, see app/main.py:_handle_general).
+  - ``[]``: retrieval *was* attempted (factual/multi route) but found
+    nothing -- the conversation has files, just none relevant/indexed yet.
+  - non-empty list: the normal case, chunks to build a "based on" answer
+    from.
 """
 from __future__ import annotations
 
@@ -52,17 +60,23 @@ async def generate_stream(
     mock/real contract.
     """
     if settings.MOCK_LLM:
-        async for delta in _mock_generate_stream(prompt, context_chunks or []):
+        async for delta in _mock_generate_stream(prompt, context_chunks, thinking_level):
             yield delta
     else:
         async for delta in _real_generate_stream(prompt, thinking_level):
             yield delta
 
 
-async def _mock_generate_stream(prompt: str, context_chunks: list[dict[str, Any]]) -> AsyncIterator[str]:
-    del prompt  # the mock answer is built from context_chunks, not the full rendered prompt
-
-    if context_chunks:
+async def _mock_generate_stream(
+    prompt: str, context_chunks: list[dict[str, Any]] | None, thinking_level: str
+) -> AsyncIterator[str]:
+    if context_chunks is None:
+        # General-chat route: no retrieval was attempted at all, so there's
+        # no "based on" context and no "nothing found" framing either --
+        # echoes the actual prompt + thinking_level so mock-mode tests can
+        # confirm both flowed through correctly.
+        full_text = f"תשובה מדומה לשיחה כללית (רמת חשיבה: {thinking_level}) עבור: {prompt}"
+    elif context_chunks:
         snippets = []
         for chunk in context_chunks:
             source_ref = chunk.get("source_ref") or "לא ידוע"

@@ -2,7 +2,7 @@
 # Placeholder config for the retention-sweeper script (not written here —
 # out of scope for this infra change; a small Python/Node script needs to
 # be added separately under e.g. services/retention-sweeper/ and built into
-# `retentionSweeper.image`). It is expected to: query Postgres for
+# `retentionSweeper.image`). It is expected to: query MSSQL for
 # conversations whose retention_days has elapsed, DROP the matching Milvus
 # partition(s), delete the conversation's files under NFS, and flip
 # conversations.status to 'purged'.

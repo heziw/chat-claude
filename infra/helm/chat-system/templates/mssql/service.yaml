@@ -1,0 +1,16 @@
+{{- if .Values.mssql.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mssql
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "mssql" "ctx" $) | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "chat-system.selectorLabels" (dict "component" "mssql" "ctx" $) | nindent 4 }}
+  ports:
+    - name: mssql
+      port: {{ .Values.mssql.port }}
+      targetPort: {{ .Values.mssql.port }}
+{{- end }}

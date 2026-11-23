@@ -2,15 +2,23 @@
 
 FastAPI service that answers `POST /query`: routes the question, retrieves
 context, and streams back an answer over SSE. This is the service that
-implements the "advanced RAG" architecture (hybrid search, reranking, 4-way
+implements the "advanced RAG" architecture (hybrid search, reranking, 5-way
 query routing) rather than naive single-shot vector search. See
 `/shared/CONTRACTS.md` for the full system contract. Listens on `:8001`.
 
-## 4-way query routing (`app/retrieval.py: classify_query`)
+## 5-way query routing (`app/retrieval.py: classify_query`)
 
-Every question is classified into one of four routes before any retrieval
+Every question is classified into one of five routes before any retrieval
 happens, in this precedence order:
 
+0. **general** — hard override, checked *before* any LLM/heuristic
+   classification runs: the conversation has no files at all (neither
+   structured nor embedding-indexed). None of the other four routes make
+   sense with nothing to retrieve/summarize/compute on, so this
+   short-circuits immediately (also saves a pointless router-LLM call in
+   real mode). Plain conversational generation, no retrieval, no citations
+   — see `_handle_general` below for why this needed its own route rather
+   than just falling through to "factual" with an empty context.
 1. **summarize** — summary keywords present (`סכם`/`תמצת`/`summary`/...).
 2. **multi** — comparison keywords present (`השווה`/`compare`/`בין...ל`/...)
    **and** more than one embedding-indexed (pdf/docx/image) file exists in
@@ -18,15 +26,34 @@ happens, in this precedence order:
 3. **structured** — exactly one `ready` xlsx/csv/json file exists in the
    conversation (unconditional once that's true — by construction there's
    nothing else a structured question could be about).
-4. **factual** — the default.
+4. **factual** — the default once "general" is ruled out. An empty
+   retrieval result here means files exist but none matched/indexed yet,
+   not that none were ever uploaded.
 
 In real mode (`MOCK_LLM=false`) a router-LLM call (`VLLM_ROUTER_URL`) picks
-the category first; its answer only overrides the heuristic above if it
-parses cleanly to one of the four valid categories, otherwise the heuristic
-decides. Each route has its own SSE handler in `app/main.py`
-(`_handle_factual` / `_handle_structured` / `_handle_summarize` /
-`_handle_multi`), but all four speak the same `token`/`citation`/`done`
-wire format.
+the category first, among rules 1-4 only; its answer only overrides the
+heuristic above if it parses cleanly to one of those four valid categories,
+otherwise the heuristic decides. Each route has its own SSE handler in
+`app/main.py` (`_handle_general` / `_handle_factual` / `_handle_structured`
+/ `_handle_summarize` / `_handle_multi`), but all five speak the same
+`token`/`citation`/`done` wire format — "general" just never emits a
+`citation` event (there's no document to cite).
+
+### Why "general" is its own route, not just "factual" with no context
+
+The factual route's prompt, when retrieval finds nothing, explicitly says
+*"no relevant context was found in this conversation"* — correct framing
+when files exist but a specific question didn't match anything, but if
+reused for a conversation with **zero files**, that phrasing can bias even
+a capable model toward refusing to just chat ("I have no context..."
+instead of answering a plain "how are you?"). `_handle_general` builds a
+plain `history + question` prompt with none of that framing, and skips
+retrieval entirely (there's no Milvus partition to query against before any
+file has ever been uploaded). `thinking_level` still flows through to
+`generate_stream` exactly as everywhere else — "deep" still asks the model
+to reason harder — but there's no judge on this route: plain conversation
+has no ground truth (a computed number, source chunks, file coverage) to
+verify an answer against.
 
 ## Hybrid search + rerank (the "factual" route, `app/retrieval.py: retrieve()`)
 
@@ -131,7 +158,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 NFS_ROOT_PATH=/absolute/path/to/data/nfs-raw-files .venv/bin/uvicorn app.main:app --port 8001
 ```
 
-Requires Postgres and Milvus reachable; for the structured/summarize/multi
+Requires MSSQL and Milvus reachable; for the structured/summarize/multi
 routes to do anything useful, `structured-data-agent` (:8002) and
 `summarization-service` (:8003) should also be running — if they're not,
 those routes fail gracefully (clear SSE `token` error message + `done`) 

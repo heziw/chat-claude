@@ -4,7 +4,7 @@ pymilvus==2.4.9
 httpx==0.27.2
 sse-starlette==2.1.3
 pydantic-settings==2.5.2
-psycopg2-binary==2.9.10
+python-tds==1.17.1
 
 # Client-side BM25 for the hybrid-retrieval sparse leg (Milvus 2.4.9 has no
 # native BM25/full-text search -- that lands only in 2.5). See

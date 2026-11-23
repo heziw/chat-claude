@@ -13,7 +13,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Core infra
-    POSTGRES_URL: str = "postgresql://chatuser:chatpass@localhost:5432/chatdb"
+    MSSQL_HOST: str = "localhost"
+    MSSQL_PORT: int = 1433
+    MSSQL_DATABASE: str = "chatdb"
+    MSSQL_USER: str = "sa"
+    MSSQL_PASSWORD: str = "ChatApp!Dev123"
     NFS_ROOT_PATH: str = "./data/nfs-raw-files"
 
     # Mock mode / vLLM endpoint (same contract as the other services' llm_clients)

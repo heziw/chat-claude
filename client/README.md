@@ -1,7 +1,7 @@
 # client
 
 Angular 18 SPA — the chat UI. Talks only to the `gateway` (never directly to
-the Python services or Milvus/Postgres). See `/shared/CONTRACTS.md` for the
+the Python services or Milvus/MSSQL). See `/shared/CONTRACTS.md` for the
 full system contract. Dev server on `:4200`.
 
 ## Architecture choices

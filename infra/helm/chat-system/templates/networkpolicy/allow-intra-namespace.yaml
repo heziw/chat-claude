@@ -1,7 +1,7 @@
 {{- if .Values.networkPolicies.enabled }}
 # Every pod in this namespace can reach every other pod in this namespace
 # (gateway -> services, services -> vLLM/DB/Redis/Milvus, celery workers ->
-# Redis, retention-sweeper -> Postgres/Milvus, etc). Combined with
+# Redis, retention-sweeper -> MSSQL/Milvus, etc). Combined with
 # default-deny.yaml, this means: reachable from inside the namespace, never
 # from outside — except gateway/client, which also get
 # allow-ingress-to-edge.yaml.

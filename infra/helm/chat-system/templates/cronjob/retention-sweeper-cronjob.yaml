@@ -2,7 +2,7 @@
 # Daily sweep for conversations past their retention_days (CONTRACTS.md
 # `conversations.retention_days`, default 90). This CronJob manifest only;
 # `retentionSweeper.image` is a PLACEHOLDER — the actual sweep logic
-# (Postgres query -> Milvus DROP PARTITION -> NFS file delete -> mark
+# (MSSQL query -> Milvus DROP PARTITION -> NFS file delete -> mark
 # status=purged) is a separate small script/image to be built and pushed
 # to the internal registry, not written as part of this infra change.
 apiVersion: batch/v1

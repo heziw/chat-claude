@@ -2,7 +2,7 @@
 # Only the two edge-facing components get traffic from outside the
 # namespace: gateway (API, behind Ingress) and client (the Angular static
 # bundle the browser loads directly, also behind its own Ingress host). All
-# Python services / vLLM model servers / Postgres / Redis / Milvus rely
+# Python services / vLLM model servers / MSSQL / Redis / Milvus rely
 # solely on allow-intra-namespace.yaml and are otherwise unreachable from
 # outside this namespace — matching the plan's "only gateway is exposed"
 # requirement at the backend-API level.

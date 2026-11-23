@@ -1,0 +1,17 @@
+{{- if .Values.mssql.enabled }}
+# Mirrors infra/docker/mssql-init.sql (copied into files/ so this chart
+# stays self-contained — Helm templates can only read files under the chart
+# root). Keep both in sync if the schema changes; CONTRACTS.md is the source
+# of truth for the schema itself. Consumed by the schema-init Job, not by
+# MSSQL's own entrypoint — unlike Postgres's image, MSSQL's doesn't
+# auto-run anything dropped into a mounted directory.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-mssql-init
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "mssql" "ctx" $) | nindent 4 }}
+data:
+  init.sql: |
+{{ .Files.Get "files/mssql-init.sql" | indent 4 }}
+{{- end }}

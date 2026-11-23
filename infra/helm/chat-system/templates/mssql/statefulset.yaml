@@ -1,0 +1,77 @@
+{{- if .Values.mssql.enabled }}
+# Local-cluster MSSQL for dev/test namespaces. In a real production
+# namespace, the org has an existing enterprise SQL Server — set
+# `mssql.enabled: false` there and point `global.secretEnv.MSSQL_*` at that
+# instance instead (see values-prod.yaml). This StatefulSet+PVC is NOT a
+# substitute for a properly backed-up/HA'd production database.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mssql
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "mssql" "ctx" $) | nindent 4 }}
+spec:
+  serviceName: mssql
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "chat-system.selectorLabels" (dict "component" "mssql" "ctx" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "mssql" "ctx" $) | nindent 8 }}
+    spec:
+      containers:
+        - name: mssql
+          image: {{ include "chat-system.image" (dict "repository" .Values.mssql.image.repository "tag" .Values.mssql.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: mssql
+              containerPort: {{ .Values.mssql.port }}
+          env:
+            - name: ACCEPT_EULA
+              value: "Y"
+            - name: MSSQL_PID
+              value: {{ .Values.mssql.edition | quote }}
+            - name: MSSQL_SA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-mssql-local
+                  key: MSSQL_SA_PASSWORD
+          resources:
+            {{- toYaml .Values.mssql.resources | nindent 12 }}
+          volumeMounts:
+            - name: mssql-data
+              mountPath: /var/opt/mssql
+          # mssql-tools moved from /opt/mssql-tools/bin to /opt/mssql-tools18/bin
+          # across image versions -- try both rather than pinning one.
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  SQLCMD=/opt/mssql-tools18/bin/sqlcmd; [ -x "$SQLCMD" ] || SQLCMD=/opt/mssql-tools/bin/sqlcmd
+                  "$SQLCMD" -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -Q "SELECT 1"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  SQLCMD=/opt/mssql-tools18/bin/sqlcmd; [ -x "$SQLCMD" ] || SQLCMD=/opt/mssql-tools/bin/sqlcmd
+                  "$SQLCMD" -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -Q "SELECT 1"
+            initialDelaySeconds: 30
+            periodSeconds: 20
+  volumeClaimTemplates:
+    - metadata:
+        name: mssql-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.mssql.storage.storageClassName | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.mssql.storage.size }}
+{{- end }}

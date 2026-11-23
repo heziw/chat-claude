@@ -3,15 +3,13 @@
 FROM python:3.11-slim
 
 # tesseract-ocr is installed as a base dependency for the OCR fallback path
-# (scanned PDF pages). heb+eng language packs cover current needs; other
-# file-type parsers added later (docx/xlsx/csv/json/image) may need
-# additional system packages - add them here when that work lands.
+# (scanned PDF pages). heb+eng language packs cover current needs. No DB
+# client system packages needed: python-tds (the MSSQL driver) is pure
+# Python, unlike psycopg2 which this used to require libpq-dev/gcc for.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         tesseract-ocr-heb \
         tesseract-ocr-eng \
-        libpq-dev \
-        gcc \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

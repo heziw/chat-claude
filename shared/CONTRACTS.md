@@ -2,50 +2,60 @@
 
 מקור יחיד לאמת לכל הצוותים/שירותים. כל שינוי בחוזים האלה דורש עדכון כאן ראשון.
 
-## Postgres schema (database: `chatdb`)
+## Relational DB: Microsoft SQL Server (database: `chatdb`)
+
+**שונה מגרסה קודמת של המסמך**: המערכת רצה במקור מול Postgres; הוחלף ל-**MSSQL** כדי להתחבר לשרת הארגוני הקיים (לא פורסים DB חדש בפרודקשן — ראו `infra/helm/chat-system/README.md`). החלטות תרגום scheme שחלות על כל הטבלאות:
+- **IDs מיוצרים באפליקציה, לא ב-DB**: עמודות `id` הן `NVARCHAR(36)` (לא `UNIQUEIDENTIFIER` הבינארי של MSSQL) **בלי** default — כל שירות מייצר `str(uuid4())`/`randomUUID()` לפני ה-INSERT ושולח אותו במפורש. זה נמנע לגמרי מהבדלי `RETURNING id` (Postgres) מול `OUTPUT inserted.id` (MSSQL), ושומר את אותו פורמט מחרוזת UUID מקווקו בדיוק כמו שכבר בשימוש בכל מקום אחר במערכת (שמות partition ב-Milvus, נתיבי NFS, וכו') — שום קוד שצורך UUID כ-string לא צריך להשתנות.
+- `TIMESTAMPTZ`/`now()` → `DATETIMEOFFSET`/`SYSDATETIMEOFFSET()`.
+- `JSONB` → `NVARCHAR(MAX)` (טקסט JSON גולמי; אין native JSON type ב-MSSQL) — כל שירות עושה serialize/deserialize מפורש (`json.dumps`/`JSON.stringify` לפני כתיבה, `json.loads`/`JSON.parse` אחרי קריאה) לעמודת `citations`.
+- `TEXT` → `NVARCHAR(MAX)` (שדות ארוכים/לא חסומים) או `NVARCHAR(n)` (שדות קצרים עם גבול ידוע כמו `role`/`status`/`file_type`).
 
 ```sql
 CREATE TABLE users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  sso_subject TEXT UNIQUE NOT NULL,
-  display_name TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'user',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id NVARCHAR(36) PRIMARY KEY,
+  sso_subject NVARCHAR(255) UNIQUE NOT NULL,
+  display_name NVARCHAR(255) NOT NULL,
+  role NVARCHAR(50) NOT NULL DEFAULT 'user',
+  created_at DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
 );
 
 CREATE TABLE conversations (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id),
-  title TEXT NOT NULL DEFAULT 'שיחה חדשה',
+  id NVARCHAR(36) PRIMARY KEY,
+  user_id NVARCHAR(36) NOT NULL REFERENCES users(id),
+  title NVARCHAR(500) NOT NULL DEFAULT N'שיחה חדשה',
   retention_days INT NOT NULL DEFAULT 90,
-  last_active_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  status TEXT NOT NULL DEFAULT 'active', -- active | purged
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  last_active_at DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+  status NVARCHAR(20) NOT NULL DEFAULT 'active', -- active | purged
+  created_at DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
 );
 
 CREATE TABLE messages (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  role TEXT NOT NULL, -- user | assistant | system
-  content TEXT NOT NULL,
-  citations JSONB NOT NULL DEFAULT '[]',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id NVARCHAR(36) PRIMARY KEY,
+  conversation_id NVARCHAR(36) NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  role NVARCHAR(20) NOT NULL, -- user | assistant | system
+  content NVARCHAR(MAX) NOT NULL,
+  citations NVARCHAR(MAX) NOT NULL DEFAULT '[]', -- JSON text, (de)serialized by the app
+  created_at DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
 );
 
 CREATE TABLE file_metadata (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  original_name TEXT NOT NULL,
-  file_type TEXT NOT NULL, -- pdf | docx | xlsx | csv | json | image
-  nfs_path TEXT NOT NULL,
+  id NVARCHAR(36) PRIMARY KEY,
+  conversation_id NVARCHAR(36) NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  original_name NVARCHAR(500) NOT NULL,
+  file_type NVARCHAR(20) NOT NULL, -- pdf | docx | xlsx | csv | json | image
+  nfs_path NVARCHAR(1000) NOT NULL,
   size_bytes BIGINT NOT NULL,
-  index_status TEXT NOT NULL DEFAULT 'pending', -- pending | indexing | ready | failed
-  milvus_partition TEXT,
-  structured_store_ref TEXT, -- path to parquet/duckdb side-store for xlsx/csv/json
-  error_message TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  index_status NVARCHAR(20) NOT NULL DEFAULT 'pending', -- pending | indexing | ready | failed
+  milvus_partition NVARCHAR(100) NULL,
+  structured_store_ref NVARCHAR(1000) NULL, -- path to parquet side-store for xlsx/csv/json
+  error_message NVARCHAR(MAX) NULL,
+  created_at DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
 );
 ```
+
+**Drivers**: Python services use `python-tds` (pytds — pure-Python TDS client, no ODBC/system driver needed, consistent with the project's minimal-dependency-footprint preference for an air-gapped registry). Gateway (NestJS) uses the `mssql` npm package (tedious-based).
+
+**Env vars** (replace the old single `POSTGRES_URL`): `MSSQL_HOST`, `MSSQL_PORT` (default `1433`), `MSSQL_DATABASE`, `MSSQL_USER`, `MSSQL_PASSWORD`. Local dev: a disposable `mcr.microsoft.com/mssql/server` container (see `docker-compose.yml`). Production: point these at the existing enterprise SQL Server — nothing in this repo deploys an MSSQL instance for production (see Helm chart README, same pattern Postgres had before).
 
 Partition/collection naming: Milvus partition name = `conv_<conversation_id без מקפים>` (UUID hex, Milvus לא מאפשר מקפים בשמות partition).
 
@@ -67,12 +77,12 @@ Partition לכל conversation. Index: `HNSW` על dense_vector (cosine), sparse 
 ## שירותים — API contracts (כולם FastAPI, OpenAPI זמין ב-`/openapi.json`)
 
 ### ingestion-service (`:8000`)
-- `POST /ingest` — multipart form: `file`, `conversation_id`. מחזיר `{task_id, file_id}` (202 Accepted). מריץ pipeline אסינכרוני ב-Celery: save-to-nfs → parse → chunk → embed → write-milvus/postgres (ל-pdf/docx/image) **או** save-to-nfs → parse-to-dataframe → write-side-store (ל-xlsx/csv/json).
+- `POST /ingest` — multipart form: `file`, `conversation_id`. מחזיר `{task_id, file_id}` (202 Accepted). מריץ pipeline אסינכרוני ב-Celery: save-to-nfs → parse → chunk → embed → write-milvus/mssql (ל-pdf/docx/image) **או** save-to-nfs → parse-to-dataframe → write-side-store (ל-xlsx/csv/json).
 - `GET /ingest/{task_id}/status` → `{status, file_id, error}` (status ∈ pending|indexing|ready|failed)
 - `DELETE /conversations/{conversation_id}/files` — מוחק partition ב-Milvus + קבצים ב-NFS + side-stores (נקרא גם ע"י retention-sweeper וגם ע"י gateway ב-מחיקה ידנית)
 
 ### retrieval-orchestrator (`:8001`)
-- `POST /query` — body: `{conversation_id, question, history?, thinking_level?}`. Response: `text/event-stream` (SSE) עם events: `token` (delta טקסט), `citation` (source_ref+snippet), `done`.
+- `POST /query` — body: `{conversation_id, question, history?, thinking_level?}`. Response: `text/event-stream` (SSE) עם events: `token` (delta טקסט), `citation` (source_ref+snippet), `done`. מנותב (`classify_query`) ל-1 מתוך 5: **general** (אין שום קובץ בשיחה — override מכני, לפני כל סיווג אחר — שיחה רגילה בלי retrieval, בלי "לא נמצא הקשר" שעלול להטות את המודל לסרב לענות, בלי citations), **factual** (ברירת מחדל כש-general לא רלוונטי), **structured**, **summarize**, **multi**.
 - `GET /files/{file_id}/schema` — proxy ל-structured-data-agent (debug)
 
 ### structured-data-agent (`:8002`)
@@ -80,8 +90,8 @@ Partition לכל conversation. Index: `HNSW` על dense_vector (cosine), sparse 
 - `GET /schema/{file_id}` → עמודות/טיפוסים של ה-DataFrame
 
 ### summarization-service (`:8003`)
-- `POST /summarize` — body: `{file_id, thinking_level?}`. מחזיר `{task_id}` (202). מריץ map-reduce היררכי ב-Celery.
-- `GET /summarize/{task_id}` → `{status, summary?}`
+- `POST /summarize` — body: `{file_id, thinking_level?, question?}`. מחזיר `{task_id}` (202). מריץ map-reduce היררכי ב-Celery; `question` (אם יש בו מוקד ספציפי, לא "סכם בבקשה" גנרי) ממקד את שלב ה-map בנושא שנשאל.
+- `GET /summarize/{task_id}` → `{status, summary?, judge?}` — `judge` מופיע רק כש-`thinking_level="deep"` (ראו למטה).
 
 ### gateway (NestJS, `:3000`) — מול ה-client
 - `POST /auth/login`, `GET /auth/callback` (OIDC) — dev מצב: `POST /auth/dev-login` (username בלבד, ללא IdP, **רק כשFLAG=dev**)
@@ -89,7 +99,7 @@ Partition לכל conversation. Index: `HNSW` על dense_vector (cosine), sparse 
 - `GET /conversations/:id/messages`
 - `POST /conversations/:id/files` (multipart proxy ל-ingestion-service `/ingest`)
 - `GET /conversations/:id/files/:fileId/status` (proxy ל-ingestion-service, גם SSE push דרך `/conversations/:id/events`)
-- `POST /conversations/:id/query` → SSE proxy ל-retrieval-orchestrator `/query`, שומר message+citations ב-Postgres אחרי `done`
+- `POST /conversations/:id/query` → SSE proxy ל-retrieval-orchestrator `/query`, שומר message+citations ב-MSSQL אחרי `done`
 
 ## thinking_level (נבחר ע"י המשתמש, לא קבוע מראש)
 
@@ -111,4 +121,4 @@ Partition לכל conversation. Index: `HNSW` על dense_vector (cosine), sparse 
 זה מאפשר להרים את כל המערכת לוקאלית ולבדוק flow מלא בלי GPU. ב-production (`MOCK_LLM=false`), הקריאות הולכות ל-endpoints האמיתיים ב-env vars: `VLLM_GENERATION_URL` (muse30b/gemma3), `VLLM_EMBED_URL`, `VLLM_RERANK_URL`, `VLLM_ROUTER_URL`, `VLLM_VISION_URL` — כולם OpenAI-compatible (`/v1/...`).
 
 ## Env vars (קובץ `.env`, ראו `.env.example`)
-`POSTGRES_URL`, `MILVUS_HOST`, `MILVUS_PORT`, `REDIS_URL`, `NFS_ROOT_PATH`, `MOCK_LLM`, `VLLM_GENERATION_URL`, `VLLM_EMBED_URL`, `VLLM_RERANK_URL`, `VLLM_ROUTER_URL`, `VLLM_VISION_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `JWT_SECRET`, `AUTH_MODE` (`oidc`|`dev`)
+`MSSQL_HOST`, `MSSQL_PORT`, `MSSQL_DATABASE`, `MSSQL_USER`, `MSSQL_PASSWORD`, `MILVUS_HOST`, `MILVUS_PORT`, `REDIS_URL`, `NFS_ROOT_PATH`, `MOCK_LLM`, `VLLM_GENERATION_URL`, `VLLM_EMBED_URL`, `VLLM_RERANK_URL`, `VLLM_ROUTER_URL`, `VLLM_VISION_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `JWT_SECRET`, `AUTH_MODE` (`oidc`|`dev`)

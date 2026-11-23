@@ -208,14 +208,31 @@ export class AuthService {
       return existing.rows[0];
     }
 
-    const inserted = await this.db.query<UserEntity>(
-      `INSERT INTO users (id, sso_subject, display_name, role)
-       VALUES ($1, $2, $3, 'user')
-       ON CONFLICT (sso_subject) DO UPDATE SET sso_subject = EXCLUDED.sso_subject
-       RETURNING *`,
-      [randomUUID(), ssoSubject, displayName],
-    );
-    return inserted.rows[0];
+    // MSSQL has no `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` — the id
+    // is generated here in the app (see shared/CONTRACTS.md) and `OUTPUT
+    // INSERTED.*` goes before VALUES rather than after. The SELECT above
+    // already covers the common case; this try/catch only guards the rare
+    // race where two first-logins for the same sso_subject insert
+    // concurrently (sso_subject is UNIQUE, so the loser falls back to a
+    // plain SELECT instead of erroring out).
+    try {
+      const inserted = await this.db.query<UserEntity>(
+        `INSERT INTO users (id, sso_subject, display_name, role)
+         OUTPUT INSERTED.*
+         VALUES ($1, $2, $3, 'user')`,
+        [randomUUID(), ssoSubject, displayName],
+      );
+      return inserted.rows[0];
+    } catch (err: any) {
+      const retry = await this.db.query<UserEntity>(
+        'SELECT * FROM users WHERE sso_subject = $1',
+        [ssoSubject],
+      );
+      if (retry.rows.length > 0) {
+        return retry.rows[0];
+      }
+      throw err;
+    }
   }
 
   private issueSession(user: UserEntity): LoginResult {

@@ -98,7 +98,7 @@ def ingest_status(task_id: str):
     error = fm.get("error_message")
 
     # Cross-check against Celery's own task state in case the worker died
-    # before it could persist a 'failed' status to Postgres.
+    # before it could persist a 'failed' status to MSSQL.
     result = AsyncResult(task_id, app=celery_app)
     if result.state == "FAILURE" and status != "failed":
         status = "failed"
@@ -134,7 +134,7 @@ def delete_conversation_files(conversation_id: str):
         deleted_rows = db.delete_files_for_conversation(conversation_id)
     except Exception as exc:
         logger.exception("Failed to delete file_metadata rows for conversation %s", conversation_id)
-        errors.append(f"postgres: {exc}")
+        errors.append(f"mssql: {exc}")
 
     if errors:
         return JSONResponse(

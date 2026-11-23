@@ -9,7 +9,7 @@ or, for a multi-sheet xlsx file, one parquet per sheet:
 
     NFS_ROOT_PATH/<conversation_id>/structured/<file_id>__<sheet_name>.parquet
 
-The authoritative pointer is recorded in Postgres
+The authoritative pointer is recorded in MSSQL
 ``file_metadata.structured_store_ref``. Because the exact shape of that
 pointer is an implementation detail of ingestion-service (built in
 parallel), this loader is deliberately permissive about what

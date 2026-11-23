@@ -25,7 +25,7 @@ pick the max row) — a single one-shot code generation call struggles with
 that kind of question; a short explicit plan doesn't.
 
 1. `app/data_store.py` loads the right DataFrame(s) from parquet, resolved
-   via `file_metadata.structured_store_ref` in Postgres (handles a single
+   via `file_metadata.structured_store_ref` in MSSQL (handles a single
    parquet file, a directory of per-sheet parquet files, or a JSON index —
    see ingestion-service's side-store format).
 2. `app/llm.py: generate_plan()` turns the question into an ordered list of
@@ -114,7 +114,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 NFS_ROOT_PATH=/absolute/path/to/data/nfs-raw-files .venv/bin/uvicorn app.main:app --port 8002
 ```
 
-Requires Postgres reachable, and `NFS_ROOT_PATH` pointed at the **same**
+Requires MSSQL reachable, and `NFS_ROOT_PATH` pointed at the **same**
 absolute directory ingestion-service is writing parquet files to (see the
 "Known environment gotcha" note in `ingestion-service/README.md` — this is
 the service that will 404 if the two disagree).

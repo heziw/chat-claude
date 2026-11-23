@@ -3,14 +3,21 @@
 NestJS BFF that sits between the Angular client and the backend services (see
 `/shared/CONTRACTS.md` for the full system contract). Listens on `:3000`.
 
-## Why raw `pg`, not TypeORM/Prisma
+## Why raw `mssql`, not TypeORM/Prisma
 
-The Postgres schema is owned by `shared/CONTRACTS.md` and already created by
-`infra/docker/postgres-init.sql` — the gateway never migrates it. An ORM's
+The MSSQL schema is owned by `shared/CONTRACTS.md` and already created by
+`infra/docker/mssql-init.sql` — the gateway never migrates it. An ORM's
 main value (schema management, migrations) isn't needed here, and mapping a
 handful of known tables/queries with parameterized SQL (`src/common/database`)
 keeps every query auditable against the contract instead of hidden behind
 entity decorators. If the schema grows substantially this can be revisited.
+
+`DatabaseService.query(text, params)` keeps the `pg`-style `$1, $2, ...`
+placeholder + `{ rows }` return shape the rest of the gateway was written
+against; internally it rewrites placeholders to mssql's `@p1, @p2, ...` and
+binds them via `Request#input`. IDs are generated in the app
+(`crypto.randomUUID()`) before INSERT and `OUTPUT INSERTED.*` is used in
+place of Postgres's `RETURNING *` (see shared/CONTRACTS.md).
 
 ## Modules
 
@@ -29,7 +36,7 @@ entity decorators. If the schema grows substantially this can be revisited.
   client byte-for-byte, and — in parallel — parses `token`/`citation`/`done`
   frames to persist the user question up front and the assistant reply
   (content + citations) once `done` arrives.
-- `common/database` — single `pg.Pool`-backed `DatabaseService`.
+- `common/database` — single `mssql.ConnectionPool`-backed `DatabaseService`.
 - `common/http` — `IngestionClient` / `RetrievalClient`, thin axios wrappers
   around the two upstream Python services.
 - `common/sse` — tiny incremental SSE frame parser used by `query/`.
@@ -50,7 +57,7 @@ entity decorators. If the schema grows substantially this can be revisited.
 
 ## Env vars
 
-Repo-root `/.env.example` covers the shared ones (`POSTGRES_URL`, `AUTH_MODE`,
+Repo-root `/.env.example` covers the shared ones (`MSSQL_HOST`/`MSSQL_PORT`/`MSSQL_DATABASE`/`MSSQL_USER`/`MSSQL_PASSWORD`, `AUTH_MODE`,
 `JWT_SECRET`, `OIDC_*`, ...). `gateway/.env.example` documents the gateway-only
 ones (`INGESTION_SERVICE_URL`, `RETRIEVAL_SERVICE_URL`, `GATEWAY_BASE_URL`,
 `CLIENT_APP_URL`, `PORT`, `UPLOAD_TMP_DIR`, `MAX_UPLOAD_SIZE_BYTES`). The
@@ -65,8 +72,9 @@ npm run build
 npm run start:dev   # or: npm run start (runs dist/main.js)
 ```
 
-Requires Postgres reachable at `POSTGRES_URL` (see repo-root
-`docker-compose.yml`) and, for full end-to-end flows, `ingestion-service` on
+Requires MSSQL reachable via `MSSQL_HOST`/`MSSQL_PORT`/`MSSQL_DATABASE`/
+`MSSQL_USER`/`MSSQL_PASSWORD` (see repo-root `docker-compose.yml` for the
+local dev container) and, for full end-to-end flows, `ingestion-service` on
 `:8000` and `retrieval-orchestrator` on `:8001`.
 
 ## Endpoints

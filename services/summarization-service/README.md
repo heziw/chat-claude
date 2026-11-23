@@ -15,7 +15,7 @@ ingestion-service already wrote to Milvus for that `file_id`
 UUID, the numeric suffix is extracted by splitting on the *last* underscore
 (a plain lexicographic sort of `chunk_id` would put chunk "...10" before
 chunk "...2" once a document has 10+ chunks). The partition/`file_id` to
-look under comes from Postgres `file_metadata.milvus_partition`. If the file
+look under comes from MSSQL `file_metadata.milvus_partition`. If the file
 has no chunks yet (still indexing, or structured data with nothing in
 Milvus), the task fails cleanly and `GET /summarize/{task_id}` reports it.
 
@@ -90,7 +90,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/celery -A app.tasks worker --loglevel=info
 ```
 
-Requires Postgres, Redis, and Milvus reachable, and at least one file
+Requires MSSQL, Redis, and Milvus reachable, and at least one file
 already `ready` (ingested) in some conversation to summarize.
 
 ## Endpoints

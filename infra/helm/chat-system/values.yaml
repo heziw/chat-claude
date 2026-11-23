@@ -9,7 +9,7 @@
 global:
   # Air-gapped registry that mirrors every image used by this chart (app images
   # built by infra/offline-bundle, plus the vLLM OpenAI server image and any
-  # third-party images like postgres/redis/milvus that were pulled once on a
+  # third-party images like mssql/redis/milvus that were pulled once on a
   # connected machine, `docker save`'d, transferred, and `docker load`/pushed
   # into this registry). Nothing in this chart ever pulls from a public registry.
   imageRegistry: registry.internal
@@ -17,7 +17,7 @@ global:
   imagePullSecrets: []
   # - name: registry-internal-pull-secret
 
-  # Default StorageClass for ReadWriteOnce volumes (Postgres/Milvus local PVCs).
+  # Default StorageClass for ReadWriteOnce volumes (MSSQL/Milvus local PVCs).
   # "" = cluster default StorageClass.
   storageClassName: ""
 
@@ -59,7 +59,11 @@ global:
   # supplied by an external secret manager / sealed-secrets / SOPS, never
   # commit real values here.
   secretEnv:
-    POSTGRES_URL: "postgresql://chatuser:chatpass@postgres:5432/chatdb"
+    MSSQL_HOST: "mssql"
+    MSSQL_PORT: "1433"
+    MSSQL_DATABASE: "chatdb"
+    MSSQL_USER: "sa"
+    MSSQL_PASSWORD: "ChatApp!Dev123"
     REDIS_URL: "redis://redis:6379/0"
     JWT_SECRET: "CHANGE-ME-dev-only"
     OIDC_CLIENT_SECRET: "CHANGE-ME-dev-only"
@@ -406,25 +410,25 @@ redis:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
-postgres:
+mssql:
   # Deploy a local StatefulSet (dev/test namespaces). In a real production
   # namespace this is normally expected to be `enabled: false`, with
-  # `global.secretEnv.POSTGRES_URL` instead pointing at the org's managed
-  # Postgres (RDS-equivalent / on-prem managed cluster) — see values-prod.yaml.
+  # `global.secretEnv.MSSQL_*` instead pointing at the org's existing
+  # enterprise SQL Server — see values-prod.yaml.
   enabled: true
   image:
-    repository: postgres
-    tag: "16-alpine"
-  port: 5432
+    repository: mcr.microsoft.com/mssql/server
+    tag: "2022-latest"
+  port: 1433
   database: chatdb
-  user: chatuser
-  password: chatpass # dev default only; override via global.secretEnv.POSTGRES_URL in real envs
+  edition: Developer # MSSQL_PID -- Developer is free/unlimited for non-prod; CHANGE for a licensed prod deployment
+  password: "ChatApp!Dev123" # dev default only; override via global.secretEnv.MSSQL_PASSWORD in real envs
   storage:
     size: 20Gi
     storageClassName: ""
   resources:
-    requests: { cpu: 250m, memory: 512Mi }
-    limits: { cpu: "1", memory: 1Gi }
+    requests: { cpu: 500m, memory: 2Gi } # MSSQL needs materially more memory than Postgres did
+    limits: { cpu: "2", memory: 4Gi }
 
 milvus:
   # Standalone Milvus (same topology as docker-compose: milvus+etcd+minio),
@@ -461,7 +465,7 @@ milvus:
       storageClassName: ""
 
 retentionSweeper:
-  # CronJob only — the actual sweep script (query Postgres for conversations
+  # CronJob only — the actual sweep script (query MSSQL for conversations
   # past retention_days, DROP PARTITION in Milvus, delete NFS files, mark
   # status=purged) is out of scope here and must be added as its own image.
   enabled: true

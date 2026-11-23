@@ -7,7 +7,7 @@ celery==5.4.0
 # redis>=6.1.0 required: older redis-py releases have a VersionMismatch
 # conflict with celery/kombu (discovered in ingestion-service).
 redis>=6.1.0
-psycopg2-binary==2.9.10
+python-tds==1.17.1
 pymilvus==2.4.9
 # pymilvus -> environs depends on marshmallow's __version_info__, which was
 # removed in marshmallow 4.x; pin to the last 3.x line to avoid breaking

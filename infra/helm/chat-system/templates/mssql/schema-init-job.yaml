@@ -1,0 +1,53 @@
+{{- if .Values.mssql.enabled }}
+# Unlike Postgres's image (which auto-runs anything in
+# /docker-entrypoint-initdb.d), MSSQL's image doesn't execute mounted SQL
+# files on its own -- this Job runs it explicitly via sqlcmd. Re-runs on
+# every install/upgrade are safe: mssql-init.sql uses IF NOT EXISTS
+# throughout (see infra/docker/mssql-init.sql / CONTRACTS.md).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-mssql-schema-init
+  labels:
+    {{- include "chat-system.componentLabels" (dict "component" "mssql" "ctx" $) | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "chat-system.selectorLabels" (dict "component" "mssql-schema-init" "ctx" $) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: schema-init
+          image: {{ include "chat-system.image" (dict "repository" .Values.mssql.image.repository "tag" .Values.mssql.image.tag "ctx" $) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: MSSQL_SA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-mssql-local
+                  key: MSSQL_SA_PASSWORD
+          command:
+            - /bin/bash
+            - -c
+            - |
+              SQLCMD=/opt/mssql-tools18/bin/sqlcmd; [ -x "$SQLCMD" ] || SQLCMD=/opt/mssql-tools/bin/sqlcmd
+              until "$SQLCMD" -C -S mssql -U sa -P "$MSSQL_SA_PASSWORD" -Q "SELECT 1" >/dev/null 2>&1; do
+                echo "waiting for mssql..."; sleep 5
+              done
+              "$SQLCMD" -C -S mssql -U sa -P "$MSSQL_SA_PASSWORD" -Q "IF DB_ID('{{ .Values.mssql.database }}') IS NULL CREATE DATABASE [{{ .Values.mssql.database }}]"
+              "$SQLCMD" -C -S mssql -U sa -P "$MSSQL_SA_PASSWORD" -d {{ .Values.mssql.database }} -i /init/mssql-init.sql
+          volumeMounts:
+            - name: mssql-init
+              mountPath: /init
+              readOnly: true
+      volumes:
+        - name: mssql-init
+          configMap:
+            name: {{ .Release.Name }}-mssql-init
+{{- end }}

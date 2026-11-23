@@ -1,5 +1,5 @@
 # Celery worker consuming the "ingestion" queue (parse -> chunk -> embed ->
-# write Milvus/Postgres/NFS side-store). Same image as ingestion-service,
+# write Milvus/MSSQL/NFS side-store). Same image as ingestion-service,
 # different command. No Service: this Deployment serves no HTTP traffic.
 # Fixed replica count for now (no HPA) per the plan's current scope.
 apiVersion: apps/v1

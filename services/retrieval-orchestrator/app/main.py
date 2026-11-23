@@ -3,12 +3,15 @@
 See /home/hezi/claude/chat/shared/CONTRACTS.md for the authoritative API
 contract. This service implements:
 
-- `POST /query`: 4-way query routing (app.retrieval.classify_query) over
+- `POST /query`: 5-way query routing (app.retrieval.classify_query) over
   hybrid retrieval + streamed generation, returned as an SSE stream with
   `token`, `citation`, and `done` events -- the same event shapes as
   before, regardless of which route served the request:
-    - "factual" (default): hybrid (dense+BM25/RRF/rerank) retrieval
-      (app.retrieval.retrieve) + app.generation.generate_stream.
+    - "general": no files at all in the conversation -> plain
+      conversational generation, no retrieval attempted, no citations.
+    - "factual" (default once "general" is ruled out): hybrid
+      (dense+BM25/RRF/rerank) retrieval (app.retrieval.retrieve) +
+      app.generation.generate_stream.
     - "structured": exactly one ready xlsx/csv/json file in the
       conversation -> structured-data-agent's /structured-query.
     - "summarize": summarization-service's /summarize (+ poll).
@@ -104,7 +107,7 @@ def _build_prompt(question: str, chunks: list[dict[str, Any]], history: list[His
 
 def _get_file_counts(conversation_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Returns (structured_ready_files, embedding_ready_files) for this
-    conversation, newest-first. Never raises -- if Postgres is unreachable
+    conversation, newest-first. Never raises -- if MSSQL is unreachable
     this degrades to "no files known yet" (both empty), which routes to the
     factual path, i.e. the exact same behavior this service had before the
     routing feature existed.
@@ -151,10 +154,39 @@ async def _stream_chunks_and_generate(
     yield _sse_event("done", json.dumps({"chunks_used": len(chunks)}))
 
 
+async def _handle_general(req: QueryRequest) -> AsyncIterator[str]:
+    """No files at all in the conversation -- plain conversational route.
+    No retrieval is attempted (there's nothing to retrieve against: no
+    Milvus partition exists yet for a conversation with zero uploads), and
+    the prompt deliberately omits any "no context was found" framing --
+    that framing (used by the factual route when files exist but a
+    specific question found no match) could otherwise bias the model
+    toward refusing to just answer conversationally. `thinking_level` still
+    flows through to `generate_stream` exactly as in every other route, so
+    "deep" still asks the model to reason harder about its reply -- there's
+    just no judge here, since plain conversation has no ground truth to
+    verify an answer against the way a computed number, a summary's source
+    chunks, or a multi-document comparison's file coverage do.
+    """
+    history_block = ""
+    if req.history:
+        history_lines = "\n".join(f"{m.role}: {m.content}" for m in req.history)
+        history_block = f"היסטוריית שיחה:\n{history_lines}\n\n"
+    prompt = f"{history_block}שאלה: {req.question}"
+
+    async for delta in generate_stream(prompt, context_chunks=None, thinking_level=req.thinking_level):
+        yield _sse_event("token", delta)
+
+    yield _sse_event("done", json.dumps({"chunks_used": 0}))
+
+
 async def _handle_factual(req: QueryRequest) -> AsyncIterator[str]:
     """Default route: hybrid retrieval (dense+BM25/RRF/rerank) + generation.
     This is the original (previously dense-only) path, now backed by
     app.retrieval.retrieve's hybrid implementation -- same inputs/outputs.
+    Only reached once classify_query has ruled out "no files at all" (see
+    its docstring) -- an empty `chunks` here means files exist but none
+    matched, not that none were ever uploaded.
     """
     chunks = retrieve(conversation_id=req.conversation_id, query=req.question, top_k=settings.TOP_K_RERANK)
     async for event in _stream_chunks_and_generate(req.question, chunks, req.history, req.thinking_level):
@@ -362,7 +394,9 @@ async def _query_event_stream(req: QueryRequest) -> AsyncIterator[str]:
         )
         logger.info("conversation=%s classified as %r", req.conversation_id, category)
 
-        if category == "structured" and structured_files:
+        if category == "general":
+            handler = _handle_general(req)
+        elif category == "structured" and structured_files:
             handler = _handle_structured(req, structured_files[0])
         elif category == "summarize":
             handler = _handle_summarize(req, embedding_files, structured_files)
