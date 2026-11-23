@@ -45,7 +45,7 @@ CREATE TABLE file_metadata (
   file_type NVARCHAR(20) NOT NULL, -- pdf | docx | xlsx | csv | json | image
   nfs_path NVARCHAR(1000) NOT NULL,
   size_bytes BIGINT NOT NULL,
-  index_status NVARCHAR(20) NOT NULL DEFAULT 'pending', -- pending | indexing | ready | failed
+  index_status NVARCHAR(20) NOT NULL DEFAULT 'pending', -- pending | parsing | chunking | embedding | indexing | writing | ready | failed
   milvus_partition NVARCHAR(100) NULL,
   structured_store_ref NVARCHAR(1000) NULL, -- path to parquet side-store for xlsx/csv/json
   error_message NVARCHAR(MAX) NULL,
@@ -78,11 +78,19 @@ Partition לכל conversation. Index: `HNSW` על dense_vector (cosine), sparse 
 
 ### ingestion-service (`:8000`)
 - `POST /ingest` — multipart form: `file`, `conversation_id`. מחזיר `{task_id, file_id}` (202 Accepted). מריץ pipeline אסינכרוני ב-Celery: save-to-nfs → parse → chunk → embed → write-milvus/mssql (ל-pdf/docx/image) **או** save-to-nfs → parse-to-dataframe → write-side-store (ל-xlsx/csv/json).
-- `GET /ingest/{task_id}/status` → `{status, file_id, error}` (status ∈ pending|indexing|ready|failed)
+- `GET /ingest/{task_id}/status` → `{status, file_id, error}`. `status` is whatever `file_metadata.index_status` currently holds — the client should treat any value other than `ready`/`failed` as "still in progress" rather than enumerating an exact list, since the in-progress vocabulary is intentionally allowed to grow (currently: `pending` → `parsing` → `chunking` → `embedding` → `indexing` for pdf/docx/image, or `pending` → `parsing` → `writing` for xlsx/csv/json — real sequential sub-stages the ingestion pipeline already goes through, reported for UI transparency; see `ingestion-service/README.md`). Only `ready`/`failed` are ever checked elsewhere in the system (routing, retention, etc.).
 - `DELETE /conversations/{conversation_id}/files` — מוחק partition ב-Milvus + קבצים ב-NFS + side-stores (נקרא גם ע"י retention-sweeper וגם ע"י gateway ב-מחיקה ידנית)
 
 ### retrieval-orchestrator (`:8001`)
-- `POST /query` — body: `{conversation_id, question, history?, thinking_level?}`. Response: `text/event-stream` (SSE) עם events: `token` (delta טקסט), `citation` (source_ref+snippet), `done`. מנותב (`classify_query`) ל-1 מתוך 5: **general** (אין שום קובץ בשיחה — override מכני, לפני כל סיווג אחר — שיחה רגילה בלי retrieval, בלי "לא נמצא הקשר" שעלול להטות את המודל לסרב לענות, בלי citations), **factual** (ברירת מחדל כש-general לא רלוונטי), **structured**, **summarize**, **multi**.
+- `POST /query` — body: `{conversation_id, question, history?, thinking_level?}`. Response: `text/event-stream` (SSE) עם events: `token` (delta טקסט), `citation` (source_ref+snippet), `status` (ראו למטה), `reasoning` (ראו למטה), `done`. מנותב (`classify_query`) ל-1 מתוך 5: **general** (אין שום קובץ בשיחה — override מכני, לפני כל סיווג אחר — שיחה רגילה בלי retrieval, בלי "לא נמצא הקשר" שעלול להטות את המודל לסרב לענות, בלי citations), **factual** (ברירת מחדל כש-general לא רלוונטי), **structured**, **summarize**, **multi**.
+
+**`status` events** — אפס או יותר, לפני תחילת ה-`token` events, `data` הוא מחרוזת תווית בעברית (לא JSON) לתצוגה בלבד — למשל `"מחפש ומנתח מידע רלוונטי..."`, `"מתכנן ומריץ שאילתה על הנתונים..."`, `"מפרק את השאלה להשוואה..."`. משקפים גבולות אורקסטרציה אמיתיים שכבר קיימים בקוד (לא גרנולריות מזויפת) — לכל נתיב יש סט קבוע קטן משלו, ראו `retrieval-orchestrator/README.md`. **לא נשמרים** ב-MSSQL — זמינים רק בזמן ה-stream החי, לא כשחוזרים להיסטוריית שיחה ישנה.
+
+**`reasoning` event** — אפס או אחד, לפני תחילת ה-`token` events (אחרי ה-`status` events), `data` הוא JSON עם `{route, ...}` — תוכן תלוי-נתיב:
+- `structured`: `{route: "structured", steps: [{description, code}], judge?: {satisfactory, reason, corrected}}`
+- `summarize`: `{route: "summarize", file: "<original_name>", chunk_count, judge?: {...}}`
+- `multi`: `{route: "multi", sub_questions: [...], judge?: {satisfactory, reason, missing_file_ids, corrected?}}`
+`judge` מופיע רק כש-`thinking_level="deep"`. `factual`/`general` לא מנפיקים `reasoning` בכלל (אין תוכן "חשיבה" מעבר ל-citations שכבר מוצגים). **לא נשמר** ב-MSSQL — אותה הערה כמו `status`.
 - `GET /files/{file_id}/schema` — proxy ל-structured-data-agent (debug)
 
 ### structured-data-agent (`:8002`)

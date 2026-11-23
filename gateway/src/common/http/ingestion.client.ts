@@ -10,7 +10,10 @@ export interface IngestResponse {
 }
 
 export interface IngestStatusResponse {
-  status: 'pending' | 'indexing' | 'ready' | 'failed';
+  // In-progress vocabulary is intentionally open-ended (see CONTRACTS.md) --
+  // only "ready"/"failed" are ever branched on; passed through to the
+  // client as-is for display.
+  status: string;
   file_id: string;
   error?: string | null;
 }

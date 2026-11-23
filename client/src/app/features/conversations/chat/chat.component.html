@@ -24,6 +24,26 @@
           [class.user]="message.role === 'user'"
           [class.assistant]="message.role !== 'user'"
         >
+          @if (message.reasoning; as reasoning) {
+            <div class="reasoning-block">
+              <button
+                type="button"
+                class="reasoning-toggle"
+                (click)="toggleReasoning(message.id)"
+              >
+                <span class="arrow" [class.open]="expandedReasoningId() === message.id">▸</span>
+                🧠 {{ reasoningTitle(reasoning) }}
+              </button>
+              @if (expandedReasoningId() === message.id) {
+                <div class="reasoning-content">
+                  <ng-container
+                    *ngTemplateOutlet="reasoningBody; context: { reasoning: reasoning }"
+                  ></ng-container>
+                </div>
+              }
+            </div>
+          }
+
           <p class="bubble-content">{{ message.content }}</p>
 
           @if (message.citations.length) {
@@ -51,7 +71,24 @@
     @if (isStreaming()) {
       <div class="bubble-row">
         <div class="bubble assistant streaming">
-          <p class="bubble-content">{{ streamingText() }}<span class="cursor">▍</span></p>
+          @if (processingStatus()) {
+            <p class="status-line"><span class="status-spinner"></span>{{ processingStatus() }}</p>
+          }
+
+          @if (streamingReasoning(); as liveReasoning) {
+            <div class="reasoning-block live">
+              <div class="reasoning-toggle static">🧠 {{ reasoningTitle(liveReasoning) }}</div>
+              <div class="reasoning-content">
+                <ng-container
+                  *ngTemplateOutlet="reasoningBody; context: { reasoning: liveReasoning }"
+                ></ng-container>
+              </div>
+            </div>
+          }
+
+          @if (streamingText()) {
+            <p class="bubble-content">{{ streamingText() }}<span class="cursor">▍</span></p>
+          }
 
           @if (streamingCitations().length) {
             <div class="citations">
@@ -77,6 +114,57 @@
 
     <div #messagesEnd></div>
   </section>
+
+  <!-- Shared body markup for a `reasoning` trace, rendered both live
+       (auto-open, while streaming) and from a finished Message (behind the
+       collapsible toggle above). Content depends on reasoning.route. -->
+  <ng-template #reasoningBody let-reasoning="reasoning">
+    @switch (reasoning.route) {
+      @case ('structured') {
+        @if (reasoning.steps?.length) {
+          <ol class="reasoning-steps">
+            @for (step of reasoning.steps; track $index) {
+              <li>
+                <div class="step-desc">{{ step.description }}</div>
+                @if (step.code) {
+                  <pre class="step-code">{{ step.code }}</pre>
+                }
+              </li>
+            }
+          </ol>
+        } @else {
+          <p class="reasoning-empty">אין שלבים להצגה.</p>
+        }
+      }
+      @case ('summarize') {
+        <p class="reasoning-line">קובץ: {{ reasoning.file }}</p>
+        @if (reasoning.chunk_count != null) {
+          <p class="reasoning-line">מספר קטעים שנותחו: {{ reasoning.chunk_count }}</p>
+        }
+      }
+      @case ('multi') {
+        @if (reasoning.sub_questions?.length) {
+          <p class="reasoning-line">השאלה פוצלה לתת-שאלות:</p>
+          <ul class="reasoning-steps">
+            @for (sq of reasoning.sub_questions; track $index) {
+              <li>{{ sq }}</li>
+            }
+          </ul>
+        }
+      }
+    }
+    @if (reasoning.judge) {
+      <div class="reasoning-judge" [class.unsatisfactory]="!reasoning.judge.satisfactory">
+        <span class="judge-badge">
+          {{ reasoning.judge.satisfactory ? '✅ נבדק ואושר' : '⚠️ נדרש תיקון' }}
+        </span>
+        <p class="judge-reason">{{ reasoning.judge.reason }}</p>
+        @if (reasoning.judge.corrected) {
+          <p class="judge-corrected">בוצע תיקון אוטומטי לאחר הבדיקה.</p>
+        }
+      </div>
+    }
+  </ng-template>
 
   @if (uploadingFiles().length) {
     <section class="uploads">

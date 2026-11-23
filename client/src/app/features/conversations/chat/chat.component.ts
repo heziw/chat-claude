@@ -1,14 +1,15 @@
 import { Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { NgTemplateOutlet } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { ConversationsService } from '../../../core/services/conversations.service';
 import { ChatHistoryTurn, ChatService, ThinkingLevel } from '../../../core/services/chat.service';
-import { Conversation, IndexStatus, Message, UploadingFile } from '../../../core/models';
+import { Conversation, IndexStatus, Message, ReasoningInfo, UploadingFile } from '../../../core/models';
 
 @Component({
   selector: 'app-chat',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, NgTemplateOutlet],
   templateUrl: './chat.component.html',
   styleUrl: './chat.component.scss'
 })
@@ -32,11 +33,20 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   /** Key = `${messageId}:${citationIndex}` of the currently expanded citation snippet. */
   readonly expandedCitationKey = signal<string | null>(null);
+  /** Message id of the currently expanded "הצג חשיבה" reasoning panel, if any
+   *  (only one open at a time, same pattern as expandedCitationKey). */
+  readonly expandedReasoningId = signal<string | null>(null);
 
   // Live streaming state, surfaced straight from ChatService's signals.
   readonly streamingText = computed(() => this.chatService.streamingText());
   readonly streamingCitations = computed(() => this.chatService.streamingCitations());
   readonly isStreaming = computed(() => this.chatService.isStreaming());
+  /** Live "status" label (e.g. "מחפש ומנתח מידע רלוונטי..."), shown before
+   *  real token text starts arriving; null once it does / once done. */
+  readonly processingStatus = computed(() => this.chatService.processingStatus());
+  /** Live `reasoning` trace for the in-flight answer, if the route emits
+   *  one; captured into the final Message on `done` (see sendQuestion). */
+  readonly streamingReasoning = computed(() => this.chatService.streamingReasoning());
 
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
 
@@ -126,7 +136,8 @@ export class ChatComponent implements OnInit, OnDestroy {
           role: 'assistant',
           content: finalText,
           citations,
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          reasoning: this.chatService.streamingReasoning() ?? undefined
         };
         this.messages.update((list) => [...list, assistantMessage]);
         this.scrollToBottom();
@@ -158,6 +169,27 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   toggleCitation(key: string): void {
     this.expandedCitationKey.update((current) => (current === key ? null : key));
+  }
+
+  // ---- Reasoning panel --------------------------------------------------
+
+  toggleReasoning(messageId: string): void {
+    this.expandedReasoningId.update((current) => (current === messageId ? null : messageId));
+  }
+
+  /** Short Hebrew title for the reasoning toggle, route-specific so the
+   *  user knows what kind of trace they're about to expand. */
+  reasoningTitle(reasoning: ReasoningInfo): string {
+    switch (reasoning.route) {
+      case 'structured':
+        return 'שלבי הניתוח';
+      case 'summarize':
+        return 'פרטי הסיכום';
+      case 'multi':
+        return 'פירוק השאלה';
+      default:
+        return 'חשיבת המודל';
+    }
   }
 
   // ---- File upload + drag & drop --------------------------------------------
@@ -265,32 +297,28 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   statusBadge(status: IndexStatus): string {
-    switch (status) {
-      case 'pending':
-      case 'indexing':
-        return '⏳';
-      case 'ready':
-        return '✅';
-      case 'failed':
-        return '❌';
-      default:
-        return '⏳';
-    }
+    if (status === 'ready') return '✅';
+    if (status === 'failed') return '❌';
+    return '⏳'; // every in-progress stage, known or not (see IndexStatus)
   }
 
+  /** Named labels for the real sub-stages ingestion-service reports (see
+   * CONTRACTS.md's index_status note); any other in-progress value (a
+   * future-added stage this client doesn't know about yet) falls back to a
+   * generic "מעבד..." rather than silently showing the raw status string. */
+  private static readonly STATUS_LABELS: Record<string, string> = {
+    pending: 'ממתין',
+    parsing: 'מחלץ טקסט...',
+    chunking: 'מחלק לקטעים...',
+    embedding: 'מייצר embeddings...',
+    indexing: 'כותב לאינדקס...',
+    writing: 'שומר נתונים...',
+    ready: 'מוכן',
+    failed: 'נכשל'
+  };
+
   statusLabel(status: IndexStatus): string {
-    switch (status) {
-      case 'pending':
-        return 'ממתין';
-      case 'indexing':
-        return 'מאנדקס';
-      case 'ready':
-        return 'מוכן';
-      case 'failed':
-        return 'נכשל';
-      default:
-        return status;
-    }
+    return ChatComponent.STATUS_LABELS[status] ?? 'מעבד...';
   }
 
   private scrollToBottom(): void {

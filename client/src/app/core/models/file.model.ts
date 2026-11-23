@@ -1,6 +1,12 @@
 // Mirrors the `file_metadata` table and the ingestion-service status contract
-// from shared/CONTRACTS.md.
-export type IndexStatus = 'pending' | 'indexing' | 'ready' | 'failed';
+// from shared/CONTRACTS.md. The in-progress vocabulary is intentionally
+// open-ended (real sequential sub-stages the pipeline reports for UI
+// transparency, not a fixed enum) -- only 'ready'/'failed' are ever
+// special-cased; any other string is "still in progress", with these named
+// ones getting a nicer label (see chat.component.ts: statusLabel) and
+// anything unrecognized falling back to a generic "processing" label so a
+// future added stage can't break existing clients.
+export type IndexStatus = string;
 
 export interface FileMetadata {
   id: string;

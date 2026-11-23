@@ -1,6 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 import { environment } from '../../../environments/environment';
-import { Citation } from '../models';
+import { Citation, ReasoningInfo } from '../models';
 import { AuthService } from './auth.service';
 
 export interface ChatHistoryTurn {
@@ -37,6 +37,14 @@ export class ChatService {
   readonly streamingCitations = signal<Citation[]>([]);
   readonly isStreaming = signal<boolean>(false);
   readonly streamError = signal<string | null>(null);
+  /** Current `status` event's label (e.g. "מחפש ומנתח מידע רלוונטי..."),
+   *  or null once real answer content starts arriving / once done. Not
+   *  persisted -- only meaningful during the live stream (see
+   *  CONTRACTS.md's `status` event: ephemeral, not stored in MSSQL). */
+  readonly processingStatus = signal<string | null>(null);
+  /** The current answer's `reasoning` event, if the route emitted one.
+   *  Same ephemeral/not-persisted caveat as processingStatus. */
+  readonly streamingReasoning = signal<ReasoningInfo | null>(null);
 
   private abortController: AbortController | null = null;
 
@@ -53,6 +61,8 @@ export class ChatService {
 
     this.streamingText.set('');
     this.streamingCitations.set([]);
+    this.processingStatus.set(null);
+    this.streamingReasoning.set(null);
     this.streamError.set(null);
     this.isStreaming.set(true);
 
@@ -156,27 +166,41 @@ export class ChatService {
     if (dataLines.length === 0) return;
     const rawData = dataLines.join('\n');
 
-    // Token payloads are plain text deltas by contract (e.g. "315000" or
-    // " מדומה") and must never be JSON-sniffed: a bare numeric/boolean/null
-    // token is itself valid JSON (`JSON.parse("315000") === 315000`), so
-    // blindly parsing every token would silently turn real numeric answer
-    // tokens into a non-string that extractTokenDelta drops. Only the
-    // `citation` event is a genuine JSON object envelope, so only attempt
-    // parsing there (and still only for object-shaped payloads).
+    // Token/status payloads are plain text deltas by contract (e.g.
+    // "315000" or " מדומה") and must never be JSON-sniffed: a bare
+    // numeric/boolean/null value is itself valid JSON
+    // (`JSON.parse("315000") === 315000`), so blindly parsing every one
+    // would silently turn a real numeric answer token into a non-string
+    // that extractTokenDelta drops. Only `citation`/`reasoning` are genuine
+    // JSON object envelopes, so only attempt parsing for those (and still
+    // only for object-shaped payloads).
     let payload: unknown = rawData;
-    if (eventName === 'citation' && rawData.trimStart().startsWith('{')) {
+    if ((eventName === 'citation' || eventName === 'reasoning') && rawData.trimStart().startsWith('{')) {
       try {
         payload = JSON.parse(rawData);
       } catch {
-        // Malformed JSON citation — keep the raw string, extractCitation
-        // will reject it (not an object) rather than throwing.
+        // Malformed JSON — keep the raw string; the per-event handler below
+        // rejects a non-object rather than throwing.
       }
     }
 
     switch (eventName) {
+      case 'status': {
+        this.processingStatus.set(typeof payload === 'string' ? payload : rawData);
+        break;
+      }
+      case 'reasoning': {
+        if (payload && typeof payload === 'object') {
+          this.streamingReasoning.set(payload as ReasoningInfo);
+        }
+        break;
+      }
       case 'token': {
         const delta = this.extractTokenDelta(payload);
         this.streamingText.update((current) => current + delta);
+        // Real content has started arriving -- whatever "still working on
+        // it" status was showing is now stale, clear it.
+        this.processingStatus.set(null);
         break;
       }
       case 'citation': {
@@ -187,6 +211,7 @@ export class ChatService {
         break;
       }
       case 'done': {
+        this.processingStatus.set(null);
         callbacks.onDone?.(this.streamingText(), this.streamingCitations());
         break;
       }

@@ -188,6 +188,7 @@ async def _handle_factual(req: QueryRequest) -> AsyncIterator[str]:
     its docstring) -- an empty `chunks` here means files exist but none
     matched, not that none were ever uploaded.
     """
+    yield _sse_event("status", "מחפש ומנתח מידע רלוונטי...")
     chunks = retrieve(conversation_id=req.conversation_id, query=req.question, top_k=settings.TOP_K_RERANK)
     async for event in _stream_chunks_and_generate(req.question, chunks, req.history, req.thinking_level):
         yield event
@@ -197,8 +198,14 @@ async def _handle_structured(req: QueryRequest, structured_file: dict[str, Any])
     """Route a question to structured-data-agent for the conversation's
     single ready xlsx/csv/json file, then stream its `answer` as tokens
     with a single synthetic citation (no chunk/source_ref -- the data isn't
-    chunked, it's a NL->pandas query over the whole file)."""
+    chunked, it's a NL->pandas query over the whole file).
+
+    Emits one `reasoning` event (the generated pandas plan's steps, plus the
+    judge's verdict when thinking_level=="deep") before streaming the
+    answer -- see CONTRACTS.md's `reasoning` event shape.
+    """
     file_id = str(structured_file["id"])
+    yield _sse_event("status", "מתכנן ומריץ שאילתה על הנתונים...")
     try:
         result = structured_client.structured_query(file_id, req.question, req.thinking_level)
     except structured_client.StructuredQueryError as exc:
@@ -206,6 +213,11 @@ async def _handle_structured(req: QueryRequest, structured_file: dict[str, Any])
         yield _sse_event("token", f"אירעה שגיאה בפנייה לשירות הנתונים המבניים: {exc}")
         yield _sse_event("done", json.dumps({"error": True}))
         return
+
+    reasoning: dict[str, Any] = {"route": "structured", "steps": result.get("steps") or []}
+    if result.get("judge") is not None:
+        reasoning["judge"] = result["judge"]
+    yield _sse_event("reasoning", json.dumps(reasoning, ensure_ascii=False))
 
     answer = result.get("answer") or ""
     async for event in _stream_words(answer):
@@ -286,8 +298,13 @@ async def _handle_summarize(
     """Route a "summarize this" question to summarization-service, for
     whichever non-structured (pdf/docx/image) file the question is actually
     about (see _select_summarize_target) -- falling back to the most recent
-    structured file if that's all there is. Polls until ready/failed/timeout.
+    structured file if that's all there is. Polls until ready/failed/timeout,
+    emitting a `status` event per poll iteration that's still in progress
+    (summarizing a long document can take a while) and one `reasoning` event
+    (which file was picked, how many chunks, the judge's verdict when
+    thinking_level=="deep") before streaming the summary.
     """
+    yield _sse_event("status", "בוחר קובץ מתאים לסיכום...")
     target = (
         _select_summarize_target(req.question, req.conversation_id, embedding_files)
         if embedding_files
@@ -299,28 +316,32 @@ async def _handle_summarize(
         return
 
     file_id = str(target["id"])
+    file_name = target.get("original_name") or file_id
+    yield _sse_event("status", f'מסכם את "{file_name}"...')
     try:
         task_id = summarization_client.start_summarize(file_id, req.thinking_level, req.question)
-        result = summarization_client.poll_summary(task_id)
+        result: dict[str, Any] | None = None
+        for poll_result in summarization_client.poll_summary_with_progress(task_id):
+            result = poll_result
+            if result.get("status") not in ("ready", "failed"):
+                yield _sse_event("status", f'מסכם את "{file_name}"... (עדיין בעבודה)')
     except summarization_client.SummarizationError as exc:
         logger.warning("summarize route failed for file_id=%s: %s", file_id, exc)
         yield _sse_event("token", f"אירעה שגיאה בשירות הסיכום: {exc}")
         yield _sse_event("done", json.dumps({"error": True}))
         return
 
-    status = result.get("status")
+    status = (result or {}).get("status")
     if status != "ready":
         yield _sse_event("token", f"הסיכום לא הסתיים בזמן (סטטוס: {status}). נסה שוב בעוד מעט.")
         yield _sse_event("done", json.dumps({"error": True, "status": status}))
         return
 
-    judge = result.get("judge")
-    if judge is not None:
-        # Not part of the SSE wire contract (token/citation/done only, see
-        # CONTRACTS.md) -- logged for observability, same as structured's
-        # judge isn't surfaced into its SSE stream either; both are visible
-        # via the underlying service's own JSON response for debugging.
-        logger.info("summarize route judge for file_id=%s: %s", file_id, judge)
+    assert result is not None  # status == "ready" implies at least one poll iteration ran
+    reasoning: dict[str, Any] = {"route": "summarize", "file": file_name, "chunk_count": result.get("chunk_count")}
+    if result.get("judge") is not None:
+        reasoning["judge"] = result["judge"]
+    yield _sse_event("reasoning", json.dumps(reasoning, ensure_ascii=False))
 
     summary = result.get("summary") or ""
     async for event in _stream_words(summary):
@@ -342,8 +363,11 @@ async def _handle_multi(req: QueryRequest, embedding_files: list[dict[str, Any]]
     end up closest to the same document). On an incomplete verdict, one
     bounded correction: for each missing file_id, retrieve directly against
     that document (bypassing decomposition) and merge those chunks in too
-    -- not an open loop, just one guaranteed-coverage pass.
+    -- not an open loop, just one guaranteed-coverage pass. Emits one
+    `reasoning` event (the sub-questions, plus the judge's verdict when
+    applicable) before streaming the answer.
     """
+    yield _sse_event("status", "מפרק את השאלה להשוואה...")
     sub_questions = decompose_query(req.question, req.thinking_level)
 
     seen_chunk_ids: set[str] = set()
@@ -358,9 +382,11 @@ async def _handle_multi(req: QueryRequest, embedding_files: list[dict[str, Any]]
                 seen_chunk_ids.add(cid)
             merged_chunks.append(chunk)
 
+    yield _sse_event("status", "מחפש מידע רלוונטי בכל המסמכים...")
     for sub_q in sub_questions:
         _merge(retrieve(conversation_id=req.conversation_id, query=sub_q, top_k=settings.TOP_K_RERANK))
 
+    judge: dict[str, Any] | None = None
     if req.thinking_level == "deep" and embedding_files:
         judge = judge_multi_coverage(embedding_files, merged_chunks)
         if not judge.get("satisfactory", True):
@@ -370,6 +396,7 @@ async def _handle_multi(req: QueryRequest, embedding_files: list[dict[str, Any]]
                 req.conversation_id,
                 judge.get("reason"),
             )
+            yield _sse_event("status", "משלים מידע חסר ממסמכים נוספים...")
             for file_id in missing:
                 _merge(
                     retrieve(
@@ -379,6 +406,11 @@ async def _handle_multi(req: QueryRequest, embedding_files: list[dict[str, Any]]
                         file_id=str(file_id),
                     )
                 )
+
+    reasoning: dict[str, Any] = {"route": "multi", "sub_questions": sub_questions}
+    if judge is not None:
+        reasoning["judge"] = judge
+    yield _sse_event("reasoning", json.dumps(reasoning, ensure_ascii=False))
 
     async for event in _stream_chunks_and_generate(req.question, merged_chunks, req.history, req.thinking_level):
         yield event

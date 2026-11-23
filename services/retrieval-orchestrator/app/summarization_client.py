@@ -54,9 +54,22 @@ def poll_summary(task_id: str) -> dict[str, Any]:
     caller treats a non-ready/failed status as "still working, try again
     later" rather than a hard error.
     """
+    last: dict[str, Any] | None = None
+    for last in poll_summary_with_progress(task_id):
+        pass
+    return last if last is not None else {"status": "pending"}
+
+
+def poll_summary_with_progress(task_id: str):
+    """Same polling loop as poll_summary, but a generator that yields every
+    intermediate result too (not just the final one) -- lets a caller
+    (app/main.py:_handle_summarize) emit a live "still working" SSE status
+    event per poll iteration instead of only finding out once everything's
+    already done. The last item yielded is always the final ready/failed/
+    timeout result, same as poll_summary's return value.
+    """
     url = f"{settings.SUMMARIZATION_SERVICE_URL.rstrip('/')}/summarize/{task_id}"
     deadline = time.monotonic() + settings.SUMMARIZE_POLL_TIMEOUT_SECONDS
-    last: dict[str, Any] = {"status": "pending"}
     try:
         with httpx.Client(timeout=settings.HTTP_TIMEOUT_SECONDS) as client:
             while True:
@@ -66,10 +79,11 @@ def poll_summary(task_id: str) -> dict[str, Any]:
                         f"summarization-service returned {resp.status_code} for task_id={task_id}: {resp.text}"
                     )
                 last = resp.json()
+                yield last
                 if last.get("status") in ("ready", "failed"):
-                    return last
+                    return
                 if time.monotonic() >= deadline:
-                    return last
+                    return
                 time.sleep(settings.SUMMARIZE_POLL_INTERVAL_SECONDS)
     except httpx.RequestError as exc:
         raise SummarizationError(f"summarization-service unreachable at {url}: {exc}") from exc

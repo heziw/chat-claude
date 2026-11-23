@@ -130,10 +130,20 @@ def process_file_task(self, file_id: str, nfs_path: str, conversation_id: str, f
 
 
 def _process_embedding_file(self, file_id: str, nfs_path: str, conversation_id: str, file_type: str):
-    """pdf/docx/image pipeline: parse -> chunk -> embed -> write to Milvus."""
-    try:
-        db.update_index_status(file_id, "indexing")
+    """pdf/docx/image pipeline: parse -> chunk -> embed -> write to Milvus.
 
+    Reports its real sub-stages through file_metadata.index_status as it
+    moves through them ("parsing" -> "chunking" -> "embedding" ->
+    "indexing" -> "ready"/"failed") so the client's upload badge can show
+    more than a single opaque "indexing" the whole time -- see
+    CONTRACTS.md's index_status enum and client/README.md. These are real
+    sequential stages this function already goes through, not invented
+    granularity: `index_status == "ready"` is still the only state anything
+    else in the system (routing, judges, etc.) checks for, so widening the
+    in-progress vocabulary here can't affect that logic.
+    """
+    try:
+        db.update_index_status(file_id, "parsing")
         chunks = parse_file(file_type, nfs_path)
 
         if not chunks:
@@ -147,12 +157,16 @@ def _process_embedding_file(self, file_id: str, nfs_path: str, conversation_id: 
             db.update_index_status(file_id, "ready", milvus_partition=None)
             return {"file_id": file_id, "status": "ready", "chunks": 0}
 
+        db.update_index_status(file_id, "chunking")
         texts = [c.text for c in chunks]
+
+        db.update_index_status(file_id, "embedding")
         vectors = embed_texts(texts, is_query=False)
 
         chunk_ids = [f"{file_id}_{c.chunk_index}" for c in chunks]
         source_refs = [c.source_ref for c in chunks]
 
+        db.update_index_status(file_id, "indexing")
         partition_name = milvus_client.insert_chunks(
             conversation_id=conversation_id,
             file_id=file_id,
@@ -177,11 +191,12 @@ def _process_embedding_file(self, file_id: str, nfs_path: str, conversation_id: 
 
 def _process_structured_file(self, file_id: str, nfs_path: str, conversation_id: str, file_type: str):
     """xlsx/csv/json pipeline: parse -> DataFrame(s) -> parquet side-store.
-    Never touches embeddings or Milvus.
+    Never touches embeddings or Milvus. Reports "parsing" -> "writing" ->
+    "ready"/"failed" through file_metadata.index_status, same rationale as
+    the embedding pipeline above.
     """
     try:
-        db.update_index_status(file_id, "indexing")
-
+        db.update_index_status(file_id, "parsing")
         sheets = parse_structured(file_type, nfs_path)
 
         if not sheets:
@@ -195,6 +210,7 @@ def _process_structured_file(self, file_id: str, nfs_path: str, conversation_id:
             db.update_index_status(file_id, "ready", structured_store_ref=None)
             return {"file_id": file_id, "status": "ready", "sheets": 0}
 
+        db.update_index_status(file_id, "writing")
         store_ref = _write_structured_side_store(conversation_id, file_id, sheets)
 
         db.update_index_status(file_id, "ready", structured_store_ref=store_ref)
