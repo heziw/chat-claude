@@ -43,6 +43,10 @@ class SummarizeRequest(BaseModel):
     file_id: str
     thinking_level: str = "standard"  # "fast"|"standard"|"deep" -- see CONTRACTS.md
     question: str | None = None  # the user's actual chat message, for focus -- see module docstring
+    # Conversation-level custom instruction, forwarded from
+    # retrieval-orchestrator (see CONTRACTS.md "system_prompt") -- folded
+    # into the map stage's instruction alongside the question's focus.
+    system_prompt: str | None = None
 
 
 @app.get("/health")
@@ -57,7 +61,12 @@ def summarize(req: SummarizeRequest):
     has chunks?) happens inside the task itself; failures surface via
     GET /summarize/{task_id} with status="failed".
     """
-    task = summarize_file_task.delay(file_id=req.file_id, thinking_level=req.thinking_level, question=req.question)
+    task = summarize_file_task.delay(
+        file_id=req.file_id,
+        thinking_level=req.thinking_level,
+        question=req.question,
+        system_prompt=req.system_prompt,
+    )
     return {"task_id": task.id}
 
 

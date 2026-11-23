@@ -5,5 +5,8 @@ export interface MessageEntity {
   role: 'user' | 'assistant' | 'system';
   content: string;
   citations: unknown[];
+  /** Base64 data URLs of images attached to this message (general-chat
+   *  route only -- see shared/CONTRACTS.md "images"/"attachments"). */
+  attachments: unknown[];
   created_at: Date;
 }

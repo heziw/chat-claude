@@ -63,6 +63,17 @@ class QueryRequest(BaseModel):
     question: str
     history: list[HistoryMessage] | None = None
     thinking_level: str = "standard"  # "fast"|"standard"|"deep" -- see CONTRACTS.md
+    # Conversation-level custom instruction (see conversations.system_prompt in
+    # MSSQL, gateway's settings panel) -- forwarded as a real system-role
+    # message to whichever LLM call actually serves the question (every
+    # route; see CONTRACTS.md "system_prompt").
+    system_prompt: str | None = None
+    # Base64 data URLs (e.g. "data:image/png;base64,...."), gateway-side
+    # size/count-capped. Only ever used by the "general" route (see
+    # _handle_general) -- genuine multimodal chat, not the OCR-based image
+    # *ingestion* pipeline (ingestion-service/app/parsing.py:parse_image),
+    # which is a completely separate, already-existing feature.
+    images: list[str] | None = None
 
 
 def _sse_event(event: str, data: str) -> str:
@@ -132,6 +143,7 @@ async def _stream_chunks_and_generate(
     chunks: list[dict[str, Any]],
     history: list[HistoryMessage] | None,
     thinking_level: str = "standard",
+    system_prompt: str | None = None,
 ) -> AsyncIterator[str]:
     """Shared tail end of the factual and multi routes: render a prompt
     from `chunks`, stream generation tokens, then one `citation` event per
@@ -140,7 +152,9 @@ async def _stream_chunks_and_generate(
     """
     prompt = _build_prompt(question, chunks, history)
 
-    async for delta in generate_stream(prompt, context_chunks=chunks, thinking_level=thinking_level):
+    async for delta in generate_stream(
+        prompt, context_chunks=chunks, thinking_level=thinking_level, system_prompt=system_prompt
+    ):
         yield _sse_event("token", delta)
 
     for chunk in chunks:
@@ -174,7 +188,13 @@ async def _handle_general(req: QueryRequest) -> AsyncIterator[str]:
         history_block = f"היסטוריית שיחה:\n{history_lines}\n\n"
     prompt = f"{history_block}שאלה: {req.question}"
 
-    async for delta in generate_stream(prompt, context_chunks=None, thinking_level=req.thinking_level):
+    async for delta in generate_stream(
+        prompt,
+        context_chunks=None,
+        thinking_level=req.thinking_level,
+        system_prompt=req.system_prompt,
+        images=req.images,
+    ):
         yield _sse_event("token", delta)
 
     yield _sse_event("done", json.dumps({"chunks_used": 0}))
@@ -190,7 +210,9 @@ async def _handle_factual(req: QueryRequest) -> AsyncIterator[str]:
     """
     yield _sse_event("status", "מחפש ומנתח מידע רלוונטי...")
     chunks = retrieve(conversation_id=req.conversation_id, query=req.question, top_k=settings.TOP_K_RERANK)
-    async for event in _stream_chunks_and_generate(req.question, chunks, req.history, req.thinking_level):
+    async for event in _stream_chunks_and_generate(
+        req.question, chunks, req.history, req.thinking_level, system_prompt=req.system_prompt
+    ):
         yield event
 
 
@@ -207,7 +229,9 @@ async def _handle_structured(req: QueryRequest, structured_file: dict[str, Any])
     file_id = str(structured_file["id"])
     yield _sse_event("status", "מתכנן ומריץ שאילתה על הנתונים...")
     try:
-        result = structured_client.structured_query(file_id, req.question, req.thinking_level)
+        result = structured_client.structured_query(
+            file_id, req.question, req.thinking_level, system_prompt=req.system_prompt
+        )
     except structured_client.StructuredQueryError as exc:
         logger.warning("structured route failed for file_id=%s: %s", file_id, exc)
         yield _sse_event("token", f"אירעה שגיאה בפנייה לשירות הנתונים המבניים: {exc}")
@@ -319,7 +343,9 @@ async def _handle_summarize(
     file_name = target.get("original_name") or file_id
     yield _sse_event("status", f'מסכם את "{file_name}"...')
     try:
-        task_id = summarization_client.start_summarize(file_id, req.thinking_level, req.question)
+        task_id = summarization_client.start_summarize(
+            file_id, req.thinking_level, req.question, system_prompt=req.system_prompt
+        )
         result: dict[str, Any] | None = None
         for poll_result in summarization_client.poll_summary_with_progress(task_id):
             result = poll_result
@@ -412,7 +438,9 @@ async def _handle_multi(req: QueryRequest, embedding_files: list[dict[str, Any]]
         reasoning["judge"] = judge
     yield _sse_event("reasoning", json.dumps(reasoning, ensure_ascii=False))
 
-    async for event in _stream_chunks_and_generate(req.question, merged_chunks, req.history, req.thinking_level):
+    async for event in _stream_chunks_and_generate(
+        req.question, merged_chunks, req.history, req.thinking_level, system_prompt=req.system_prompt
+    ):
         yield event
 
 

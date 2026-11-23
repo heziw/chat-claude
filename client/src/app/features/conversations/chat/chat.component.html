@@ -6,7 +6,34 @@
 >
   <header class="chat-header">
     <h2>{{ conversation()?.title ?? 'שיחה' }}</h2>
+    <button
+      type="button"
+      class="settings-toggle"
+      (click)="toggleSettings()"
+      title="הגדרות שיחה (system prompt מותאם אישית)"
+    >
+      ⚙️
+    </button>
   </header>
+
+  @if (isSettingsOpen()) {
+    <section class="settings-panel">
+      <label for="system-prompt-input">System Prompt מותאם אישית לשיחה זו</label>
+      <textarea
+        id="system-prompt-input"
+        rows="3"
+        placeholder="לדוגמה: תמיד ענה בעברית פורמלית, הדגש מספרים ואחוזים..."
+        [ngModel]="systemPromptDraft()"
+        (ngModelChange)="systemPromptDraft.set($event)"
+      ></textarea>
+      <div class="settings-actions">
+        <button type="button" (click)="saveSystemPrompt()" [disabled]="isSavingSystemPrompt()">
+          {{ isSavingSystemPrompt() ? 'שומר...' : 'שמור' }}
+        </button>
+        <button type="button" class="secondary" (click)="toggleSettings()">ביטול</button>
+      </div>
+    </section>
+  }
 
   <section class="messages">
     @if (isLoadingMessages()) {
@@ -44,7 +71,17 @@
             </div>
           }
 
-          <p class="bubble-content">{{ message.content }}</p>
+          @if (message.attachments?.length) {
+            <div class="attached-images">
+              @for (img of message.attachments; track $index) {
+                <img [src]="img" class="attached-image-thumb" alt="תמונה מצורפת" />
+              }
+            </div>
+          }
+
+          @if (message.content) {
+            <p class="bubble-content">{{ message.content }}</p>
+          }
 
           @if (message.citations.length) {
             <div class="citations">
@@ -185,15 +222,43 @@
     <div class="drop-overlay">שחרר כאן להעלאת קובץ</div>
   }
 
+  <div class="quick-prompts">
+    @for (prompt of quickPrompts; track prompt.label) {
+      <button type="button" class="quick-prompt-chip" (click)="applyQuickPrompt(prompt.text)">
+        {{ prompt.label }}
+      </button>
+    }
+  </div>
+
+  @if (attachedImages().length || imageAttachError()) {
+    <section class="pending-images">
+      @for (img of attachedImages(); track img.dataUrl; let i = $index) {
+        <div class="pending-image">
+          <img [src]="img.dataUrl" [alt]="img.name" />
+          <button type="button" class="remove-image" (click)="removeAttachedImage(i)" title="הסר">✕</button>
+        </div>
+      }
+      @if (imageAttachError()) {
+        <span class="image-attach-error">{{ imageAttachError() }}</span>
+      }
+    </section>
+  }
+
   <footer class="composer">
     <input
       #fileInput
       type="file"
       class="hidden-file-input"
+      accept=".pdf,.docx,.xlsx,.csv,.json,.tif,.tiff,image/*"
       (change)="onFileInputChange($event)"
       multiple
     />
-    <button type="button" class="attach-button" (click)="openFilePicker()" title="הוסף קובץ">
+    <button
+      type="button"
+      class="attach-button"
+      (click)="openFilePicker()"
+      title="הוסף קובץ למסמכי השיחה, או תמונה לצירוף לשאלה זו"
+    >
       📎
     </button>
 
@@ -210,6 +275,7 @@
     </select>
 
     <textarea
+      #questionInput
       rows="1"
       placeholder="שאל שאלה... (Enter לשליחה, Shift+Enter לשורה חדשה)"
       [ngModel]="questionText()"
@@ -222,7 +288,7 @@
       type="button"
       class="send-button"
       (click)="sendQuestion()"
-      [disabled]="isStreaming() || !questionText().trim()"
+      [disabled]="isStreaming() || (!questionText().trim() && attachedImages().length === 0)"
     >
       {{ isStreaming() ? 'שולח...' : 'שלח' }}
     </button>

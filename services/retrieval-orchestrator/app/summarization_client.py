@@ -24,19 +24,31 @@ class SummarizationError(Exception):
     rather than letting it crash the request."""
 
 
-def start_summarize(file_id: str, thinking_level: str = "standard", question: str | None = None) -> str:
+def start_summarize(
+    file_id: str,
+    thinking_level: str = "standard",
+    question: str | None = None,
+    system_prompt: str | None = None,
+) -> str:
     """POST /summarize -> task_id. ``thinking_level`` is forwarded as-is --
     summarization-service maps it to a reasoning_effort hint on its own
     real-mode LLM calls (see CONTRACTS.md "thinking_level"). ``question`` is
     the user's actual chat message, passed through so a focused ask (e.g.
     "summarize the risk section") centers the summary instead of always
-    producing a generic whole-document one."""
+    producing a generic whole-document one. ``system_prompt`` is the
+    conversation's custom instruction (see CONTRACTS.md "system_prompt"),
+    folded into the map stage's instruction alongside the question's focus.
+    """
     url = f"{settings.SUMMARIZATION_SERVICE_URL.rstrip('/')}/summarize"
+    payload = {
+        "file_id": file_id,
+        "thinking_level": thinking_level,
+        "question": question,
+        "system_prompt": system_prompt,
+    }
     try:
         with httpx.Client(timeout=settings.HTTP_TIMEOUT_SECONDS) as client:
-            resp = client.post(
-                url, json={"file_id": file_id, "thinking_level": thinking_level, "question": question}
-            )
+            resp = client.post(url, json=payload)
     except httpx.RequestError as exc:
         raise SummarizationError(f"summarization-service unreachable at {url}: {exc}") from exc
 

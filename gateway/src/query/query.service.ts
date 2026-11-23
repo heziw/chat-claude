@@ -34,9 +34,10 @@ export class QueryService {
     question: string,
     thinkingLevel: 'fast' | 'standard' | 'deep',
     res: Response,
+    images?: string[],
   ): Promise<void> {
-    await this.conversationsService.getOwned(conversationId, userId);
-    await this.messagesService.addMessage(conversationId, 'user', question, []);
+    const conversation = await this.conversationsService.getOwned(conversationId, userId);
+    await this.messagesService.addMessage(conversationId, 'user', question, [], images ?? []);
 
     const priorMessages = await this.messagesService.listByConversation(conversationId);
     const history = priorMessages
@@ -52,7 +53,14 @@ export class QueryService {
 
     let upstream;
     try {
-      upstream = await this.retrievalClient.streamQuery(conversationId, question, history, thinkingLevel);
+      upstream = await this.retrievalClient.streamQuery(
+        conversationId,
+        question,
+        history,
+        thinkingLevel,
+        conversation.system_prompt,
+        images,
+      );
     } catch (err: any) {
       this.logger.error(`Failed to reach retrieval-orchestrator: ${err.message}`);
       res.write(`event: error\ndata: ${JSON.stringify({ message: 'retrieval service unavailable' })}\n\n`);

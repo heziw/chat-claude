@@ -57,6 +57,11 @@ class StructuredQueryRequest(BaseModel):
     file_id: str
     question: str
     thinking_level: str = "standard"
+    # Conversation-level custom instruction, forwarded from
+    # retrieval-orchestrator (see CONTRACTS.md "system_prompt") -- folded
+    # into the plan-generation prompt as a general instruction alongside
+    # the schema/question.
+    system_prompt: str | None = None
 
 
 def _load_dfs_for_file(file_id: str) -> dict[str, pd.DataFrame]:
@@ -236,7 +241,7 @@ def structured_query(req: StructuredQueryRequest) -> dict:
     dfs = _load_dfs_for_file(req.file_id)
     schema_description = describe_schema_text(dfs)
 
-    plan = generate_plan(req.question, schema_description, req.thinking_level)
+    plan = generate_plan(req.question, schema_description, req.thinking_level, system_prompt=req.system_prompt)
     session, executed_steps = _execute_plan(
         plan, dfs, req.question, schema_description, req.file_id, req.thinking_level
     )
@@ -257,6 +262,7 @@ def structured_query(req: StructuredQueryRequest) -> dict:
                 schema_description,
                 req.thinking_level,
                 extra_context=str(judge.get("reason") or ""),
+                system_prompt=req.system_prompt,
             )
             try:
                 retry_session, retry_steps = _execute_plan(

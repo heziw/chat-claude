@@ -212,6 +212,7 @@ def generate_plan(
     schema_description: str,
     thinking_level: str = "standard",
     extra_context: str | None = None,
+    system_prompt: str | None = None,
 ) -> list[dict[str, str]]:
     """Return an ordered list of ``{"description", "code"}`` steps (1-4)
     that together compute the answer to ``question``, with the final step
@@ -222,10 +223,15 @@ def generate_plan(
     mode) / used as a targeted heuristic adjustment (mock mode, see
     ``_mock_plan``) so this replan actually has a chance of doing something
     different, not just regenerating the same plan.
+
+    ``system_prompt`` is the conversation's custom instruction (see
+    CONTRACTS.md "system_prompt") -- real mode only (mock mode's
+    keyword-heuristic plan generation has no use for free-text instructions,
+    see ``_mock_plan``).
     """
     if settings.MOCK_LLM:
         return _mock_plan(question, schema_description, extra_context)
-    plan = _real_plan(question, schema_description, thinking_level, extra_context)
+    plan = _real_plan(question, schema_description, thinking_level, extra_context, system_prompt)
     if plan:
         return plan
     # Router unreachable or returned something unparseable as a plan --
@@ -281,7 +287,9 @@ def _mock_plan(question: str, schema_description: str, extra_context: str | None
     return [{"description": "חישוב ישיר על עמודה בודדת", "code": _mock_generate(question, schema_description)}]
 
 
-def _build_plan_prompt(question: str, schema_description: str, extra_context: str | None) -> str:
+def _build_plan_prompt(
+    question: str, schema_description: str, extra_context: str | None, system_prompt: str | None = None
+) -> str:
     base = (
         "אתה מומחה ל-pandas. בהינתן סכמה של DataFrame (משתנה בשם df, או "
         "מספר DataFrames במילון בשם dfs אם יש כמה גיליונות) וכן שאלה בשפה "
@@ -296,6 +304,8 @@ def _build_plan_prompt(question: str, schema_description: str, extra_context: st
         "ה-DataFrame. אל תוסיף טקסט נוסף מעבר ל-JSON.\n\n"
         f"סכמה:\n{schema_description}\n\nשאלה: {question}\n"
     )
+    if system_prompt:
+        base += f"\nהנחיה כללית מהמשתמש לשיחה זו (קחה בחשבון בבניית התוכנית): {system_prompt}\n"
     if extra_context:
         base += (
             f"\nניסיון קודם הניב תוצאה שנפסלה בבדיקת תקינות. הסיבה שניתנה: "
@@ -321,12 +331,21 @@ def _parse_steps(raw_steps: object, max_steps: int = 4) -> list[dict[str, str]] 
 
 
 def _real_plan(
-    question: str, schema_description: str, thinking_level: str, extra_context: str | None
+    question: str,
+    schema_description: str,
+    thinking_level: str,
+    extra_context: str | None,
+    system_prompt: str | None = None,
 ) -> list[dict[str, str]] | None:
     url = f"{settings.VLLM_ROUTER_URL.rstrip('/')}/chat/completions"
     payload = {
         "model": settings.VLLM_ROUTER_MODEL,
-        "messages": [{"role": "user", "content": _build_plan_prompt(question, schema_description, extra_context)}],
+        "messages": [
+            {
+                "role": "user",
+                "content": _build_plan_prompt(question, schema_description, extra_context, system_prompt),
+            }
+        ],
         "stream": False,
         "reasoning_effort": _reasoning_effort(thinking_level),
     }

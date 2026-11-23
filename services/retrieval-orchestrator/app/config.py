@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # Model name for the router LLM, used both for query classification
     # (classify_query) and multi-query decomposition (decompose_query).
     VLLM_ROUTER_MODEL: str = "router"
+    # Model name for the vision-capable model behind VLLM_VISION_URL, used
+    # only when a "general" route question carries attached images (see
+    # generation.py:_real_generate_stream) -- a separate deployment from
+    # VLLM_GENERATION_MODEL since there's no guarantee the main
+    # muse30b/gemma3 generation model is itself multimodal.
+    VLLM_VISION_MODEL: str = "vision"
 
     # Embedding dim per CONTRACTS.md (intfloat/multilingual-e5-large)
     EMBED_DIM: int = 1024

@@ -50,4 +50,12 @@ export class ConversationsService {
       `${this.baseUrl}/${conversationId}/files/${fileId}/status`
     );
   }
+
+  /** `systemPrompt: null` clears the conversation's custom instruction back
+   *  to "none" -- see shared/CONTRACTS.md "system_prompt". */
+  updateSystemPrompt(conversationId: string, systemPrompt: string | null): Observable<Conversation> {
+    return this.http.patch<Conversation>(`${this.baseUrl}/${conversationId}/system-prompt`, {
+      system_prompt: systemPrompt ?? ''
+    });
+  }
 }

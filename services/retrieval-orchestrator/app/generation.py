@@ -55,20 +55,38 @@ async def generate_stream(
     prompt: str,
     context_chunks: list[dict[str, Any]] | None = None,
     thinking_level: str = "standard",
+    system_prompt: str | None = None,
+    images: list[str] | None = None,
 ) -> AsyncIterator[str]:
     """Yield text deltas for `prompt`. See module docstring for the
     mock/real contract.
+
+    ``system_prompt`` -- the conversation's custom instruction (see
+    CONTRACTS.md "system_prompt"), sent as a real system-role message in
+    real mode, on top of whatever `prompt` already says.
+
+    ``images`` -- base64 data URLs attached to a "general" route question
+    (see app/main.py:_handle_general; every other route always passes
+    `None` here). When set, real mode calls VLLM_VISION_URL instead of
+    VLLM_GENERATION_URL with an OpenAI-style multimodal content list --
+    there's no guarantee the main generation model is itself multimodal,
+    so a dedicated vision deployment is used instead (same reasoning as
+    the separate VLLM_EMBED_URL/VLLM_RERANK_URL/VLLM_ROUTER_URL split).
     """
     if settings.MOCK_LLM:
-        async for delta in _mock_generate_stream(prompt, context_chunks, thinking_level):
+        async for delta in _mock_generate_stream(prompt, context_chunks, thinking_level, system_prompt, images):
             yield delta
     else:
-        async for delta in _real_generate_stream(prompt, thinking_level):
+        async for delta in _real_generate_stream(prompt, thinking_level, system_prompt, images):
             yield delta
 
 
 async def _mock_generate_stream(
-    prompt: str, context_chunks: list[dict[str, Any]] | None, thinking_level: str
+    prompt: str,
+    context_chunks: list[dict[str, Any]] | None,
+    thinking_level: str,
+    system_prompt: str | None = None,
+    images: list[str] | None = None,
 ) -> AsyncIterator[str]:
     if context_chunks is None:
         # General-chat route: no retrieval was attempted at all, so there's
@@ -88,6 +106,14 @@ async def _mock_generate_stream(
     else:
         full_text = "תשובה מדומה: לא נמצא מידע רלוונטי בשיחה זו (ייתכן שאין קבצים עדיין)."
 
+    # Reflect the two new optional inputs in the mock text too, so mock-mode
+    # tests can confirm they actually flowed through this far -- same idea
+    # as the thinking_level echo above.
+    if images:
+        full_text = f"[כולל {len(images)} תמונות מצורפות] {full_text}"
+    if system_prompt:
+        full_text = f"[system prompt: {system_prompt}] {full_text}"
+
     # Stream word-by-word to exercise the same `token` event path as real mode.
     words = full_text.split(" ")
     for i, word in enumerate(words):
@@ -95,11 +121,30 @@ async def _mock_generate_stream(
         yield delta
 
 
-async def _real_generate_stream(prompt: str, thinking_level: str = "standard") -> AsyncIterator[str]:
-    url = f"{settings.VLLM_GENERATION_URL.rstrip('/')}/chat/completions"
+async def _real_generate_stream(
+    prompt: str,
+    thinking_level: str = "standard",
+    system_prompt: str | None = None,
+    images: list[str] | None = None,
+) -> AsyncIterator[str]:
+    use_vision = bool(images)
+    base_url = settings.VLLM_VISION_URL if use_vision else settings.VLLM_GENERATION_URL
+    model = settings.VLLM_VISION_MODEL if use_vision else settings.VLLM_GENERATION_MODEL
+    url = f"{base_url.rstrip('/')}/chat/completions"
+
+    messages: list[dict[str, Any]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    if images:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        content.extend({"type": "image_url", "image_url": {"url": img}} for img in images)
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": prompt})
+
     payload = {
-        "model": settings.VLLM_GENERATION_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
+        "model": model,
+        "messages": messages,
         "stream": True,
         "reasoning_effort": _reasoning_effort(thinking_level),
     }

@@ -33,10 +33,19 @@ export class RetrievalClient {
     question: string,
     history?: QueryHistoryItem[],
     thinkingLevel: 'fast' | 'standard' | 'deep' = 'standard',
+    systemPrompt?: string | null,
+    images?: string[],
   ): Promise<Readable> {
     const response = await this.http.post(
       '/query',
-      { conversation_id: conversationId, question, history, thinking_level: thinkingLevel },
+      {
+        conversation_id: conversationId,
+        question,
+        history,
+        thinking_level: thinkingLevel,
+        system_prompt: systemPrompt ?? undefined,
+        images: images?.length ? images : undefined,
+      },
       {
         responseType: 'stream',
         headers: { Accept: 'text/event-stream' },

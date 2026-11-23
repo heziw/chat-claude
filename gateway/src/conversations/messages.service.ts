@@ -12,12 +12,14 @@ export class MessagesService {
       `SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC`,
       [conversationId],
     );
-    // citations is stored as raw JSON text (NVARCHAR(MAX)) in MSSQL — there
-    // is no native JSON type, so it must be parsed explicitly here (`pg`
-    // used to do this automatically for a `jsonb` column).
+    // citations/attachments are stored as raw JSON text (NVARCHAR(MAX)) in
+    // MSSQL — there is no native JSON type, so they must be parsed
+    // explicitly here (`pg` used to do this automatically for a `jsonb`
+    // column).
     return result.rows.map((row) => ({
       ...row,
-      citations: this.parseCitations(row.citations),
+      citations: this.parseJsonArray(row.citations),
+      attachments: this.parseJsonArray(row.attachments),
     }));
   }
 
@@ -26,18 +28,23 @@ export class MessagesService {
     role: 'user' | 'assistant' | 'system',
     content: string,
     citations: unknown[] = [],
+    attachments: unknown[] = [],
   ): Promise<MessageEntity> {
     const result = await this.db.query<MessageEntity>(
-      `INSERT INTO messages (id, conversation_id, role, content, citations)
+      `INSERT INTO messages (id, conversation_id, role, content, citations, attachments)
        OUTPUT INSERTED.*
-       VALUES ($1, $2, $3, $4, $5)`,
-      [randomUUID(), conversationId, role, content, JSON.stringify(citations)],
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [randomUUID(), conversationId, role, content, JSON.stringify(citations), JSON.stringify(attachments)],
     );
     const row = result.rows[0];
-    return { ...row, citations: this.parseCitations(row.citations) };
+    return {
+      ...row,
+      citations: this.parseJsonArray(row.citations),
+      attachments: this.parseJsonArray(row.attachments),
+    };
   }
 
-  private parseCitations(value: unknown): unknown[] {
+  private parseJsonArray(value: unknown): unknown[] {
     if (Array.isArray(value)) {
       return value;
     }

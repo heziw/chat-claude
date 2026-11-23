@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import { AuthenticatedUser } from '../auth/jwt-payload.interface';
 import { ConversationEntity } from './conversation.entity';
 import { ConversationsService } from './conversations.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
+import { UpdateSystemPromptDto } from './dto/update-system-prompt.dto';
 import { MessageEntity } from './message.entity';
 import { MessagesService } from './messages.service';
 
@@ -54,6 +56,16 @@ export class ConversationsController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<void> {
     await this.conversationsService.delete(id, user.sub);
+  }
+
+  @Patch(':id/system-prompt')
+  async updateSystemPrompt(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: UpdateSystemPromptDto,
+  ): Promise<ConversationEntity> {
+    await this.conversationsService.getOwned(id, user.sub); // ownership check
+    return this.conversationsService.updateSystemPrompt(id, dto.system_prompt?.trim() || null);
   }
 
   @Get(':id/messages')

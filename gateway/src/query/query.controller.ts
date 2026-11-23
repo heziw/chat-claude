@@ -1,4 +1,4 @@
-import { Body, Controller, Param, ParseUUIDPipe, Post, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Param, ParseUUIDPipe, Post, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -18,12 +18,16 @@ export class QueryController {
     @Body() dto: QueryDto,
     @Res({ passthrough: false }) res: Response,
   ): Promise<void> {
+    if (!dto.question.trim() && !dto.images?.length) {
+      throw new BadRequestException('question or images must be provided');
+    }
     await this.queryService.streamAndPersist(
       conversationId,
       user.sub,
       dto.question,
       dto.thinking_level ?? 'standard',
       res,
+      dto.images,
     );
   }
 }

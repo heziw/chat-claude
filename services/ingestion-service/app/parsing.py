@@ -12,11 +12,13 @@ Two families of file_type are handled here:
 """
 from __future__ import annotations
 
+import io
 import logging
 import re
 from dataclasses import dataclass
 
 from app.config import settings
+from app.vision import caption_image
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,16 @@ class Chunk:
     chunk_index: int
 
 
+# An embedded image smaller than this in both dimensions is almost always a
+# logo, bullet icon, or other decorative marker rather than a meaningful
+# figure/chart/photo -- not worth a vision-model call. See
+# _caption_embedded_images.
+_MIN_EMBEDDED_IMAGE_PX = 80
+# Hard cap per page so one image-heavy page can't blow up ingestion
+# time/cost with dozens of vision-model calls.
+_MAX_EMBEDDED_IMAGES_PER_PAGE = 5
+
+
 def _ocr_page_to_text(page) -> str:
     """Best-effort OCR of a pypdf page via rendered image.
 
@@ -83,10 +95,62 @@ def _ocr_page_to_text(page) -> str:
     return ""  # actual rasterization happens in _extract_pdf_pages via pdfplumber
 
 
-def _extract_pdf_pages(path: str) -> list[str]:
-    """Return a list of per-page text strings for a PDF.
+def _caption_embedded_images(page, page_num: int) -> list[str]:
+    """Vision-caption each non-tiny image embedded on `page`, so a
+    photo/chart/diagram embedded alongside real running text becomes
+    searchable text too -- otherwise it's completely invisible to RAG
+    (distinct from a *whole-page* scan, which the OCR fallback in
+    _extract_pdf_pages already handles). Only ever called for pages where
+    real text was actually extracted (not OCR) -- see call site -- since a
+    full-page scan is itself one giant "embedded image" already captured
+    by OCR; captioning it again here would be redundant/misleading.
 
-    Strategy per page:
+    Best-effort throughout: a page with images pypdf can't read, or a
+    vision-model call that fails, just means fewer/no captions for that
+    page, never a failed ingestion.
+    """
+    if Image is None:
+        return []
+
+    try:
+        images = list(page.images)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Could not read embedded images on page %d: %s", page_num, exc)
+        return []
+
+    captions: list[str] = []
+    processed = 0
+    for img_file in images:
+        if processed >= _MAX_EMBEDDED_IMAGES_PER_PAGE:
+            logger.info(
+                "Page %d has more than %d embedded images; skipping the rest",
+                page_num,
+                _MAX_EMBEDDED_IMAGES_PER_PAGE,
+            )
+            break
+        try:
+            pil_image = img_file.image
+            if pil_image is None:
+                continue
+            width, height = pil_image.size
+            if width < _MIN_EMBEDDED_IMAGE_PX and height < _MIN_EMBEDDED_IMAGE_PX:
+                continue  # likely a logo/icon/decorative marker, not worth describing
+            buf = io.BytesIO()
+            pil_image.convert("RGB").save(buf, format="PNG")
+            caption = caption_image(buf.getvalue(), mime_type="image/png")
+            processed += 1
+            if caption:
+                captions.append(caption)
+        except Exception as exc:
+            logger.warning("Failed to caption an embedded image on page %d: %s", page_num, exc)
+
+    return captions
+
+
+def _extract_pdf_pages(path: str) -> list[tuple[str, list[str]]]:
+    """Return, for each page, (page_text, embedded_image_captions).
+
+    page_text strategy:
       1. Try pypdf text extraction.
       2. If empty, try pdfplumber text extraction (different extraction
          heuristics, sometimes succeeds where pypdf fails).
@@ -94,19 +158,27 @@ def _extract_pdf_pages(path: str) -> list[str]:
          pdfplumber's page.to_image() + pytesseract. If OCR isn't available
          or fails, log a warning and leave the page's text empty - we do
          NOT fail the whole document for one bad page.
+
+    embedded_image_captions is only ever populated for pages where step 1
+    or 2 found real text -- never for an OCR-recovered (whole-page-scan)
+    page, see _caption_embedded_images.
     """
-    pages_text: list[str] = []
+    pages_result: list[tuple[str, list[str]]] = []
 
     with open(path, "rb") as f:
         reader = pypdf.PdfReader(f)
         num_pages = len(reader.pages)
         pypdf_texts = []
+        pypdf_pages = []
         for i in range(num_pages):
             try:
-                pypdf_texts.append(reader.pages[i].extract_text() or "")
+                page = reader.pages[i]
+                pypdf_texts.append(page.extract_text() or "")
+                pypdf_pages.append(page)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("pypdf failed to extract page %d: %s", i + 1, exc)
                 pypdf_texts.append("")
+                pypdf_pages.append(None)
 
     plumber_pages = None
     needs_plumber = any(not t.strip() for t in pypdf_texts)
@@ -120,6 +192,7 @@ def _extract_pdf_pages(path: str) -> list[str]:
     for i, text in enumerate(pypdf_texts):
         page_num = i + 1
         final_text = text or ""
+        used_ocr = False
 
         if not final_text.strip() and plumber_pages is not None:
             try:
@@ -139,6 +212,7 @@ def _extract_pdf_pages(path: str) -> list[str]:
                     ocr_text = pytesseract.image_to_string(pil_image, lang="heb+eng")
                     if ocr_text.strip():
                         final_text = ocr_text
+                        used_ocr = True
                         logger.info("OCR recovered text for page %d", page_num)
                     else:
                         logger.warning("OCR produced no text for page %d; skipping", page_num)
@@ -152,7 +226,11 @@ def _extract_pdf_pages(path: str) -> list[str]:
                     page_num,
                 )
 
-        pages_text.append(final_text)
+        captions: list[str] = []
+        if final_text.strip() and not used_ocr and pypdf_pages[i] is not None:
+            captions = _caption_embedded_images(pypdf_pages[i], page_num)
+
+        pages_result.append((final_text, captions))
 
     if plumber_pages is not None:
         try:
@@ -160,7 +238,7 @@ def _extract_pdf_pages(path: str) -> list[str]:
         except Exception:
             pass
 
-    return pages_text
+    return pages_result
 
 
 def _split_into_paragraphs(text: str) -> list[str]:
@@ -231,24 +309,33 @@ def _chunk_text(
     return chunks
 
 
-def chunk_pages(pages_text: list[str]) -> list[Chunk]:
+def chunk_pages(pages_result: list[tuple[str, list[str]]]) -> list[Chunk]:
     """Chunk every page's text, tagging each chunk with its page-based
-    source_ref ("עמוד N") per CONTRACTS.md citation format.
+    source_ref ("עמוד N") per CONTRACTS.md citation format. Each embedded
+    image caption for that page (see _caption_embedded_images) becomes its
+    own chunk with a distinct source_ref ("עמוד N (תמונה מוטבעת)") so a
+    citation pointing at a described image reads clearly as such, rather
+    than looking like it came from the page's running text -- captions are
+    already short, so they skip _chunk_text entirely.
     """
     chunks: list[Chunk] = []
     idx = 0
-    for page_num, text in enumerate(pages_text, start=1):
-        if not text or not text.strip():
-            continue
-        for piece in _chunk_text(text):
-            chunks.append(Chunk(text=piece, source_ref=f"עמוד {page_num}", chunk_index=idx))
+    for page_num, (text, captions) in enumerate(pages_result, start=1):
+        if text and text.strip():
+            for piece in _chunk_text(text):
+                chunks.append(Chunk(text=piece, source_ref=f"עמוד {page_num}", chunk_index=idx))
+                idx += 1
+        for caption in captions:
+            chunks.append(
+                Chunk(text=caption, source_ref=f"עמוד {page_num} (תמונה מוטבעת)", chunk_index=idx)
+            )
             idx += 1
     return chunks
 
 
 def parse_pdf(path: str) -> list[Chunk]:
-    pages_text = _extract_pdf_pages(path)
-    return chunk_pages(pages_text)
+    pages_result = _extract_pdf_pages(path)
+    return chunk_pages(pages_result)
 
 
 # --------------------------------------------------------------------------
@@ -338,16 +425,18 @@ def parse_docx(path: str) -> list[Chunk]:
 
 
 # --------------------------------------------------------------------------
-# Images: OCR-only (same pytesseract technique as the PDF scanned-page path).
+# Images: OCR-only, TIFF scans only (see parse_file's _OCR_SCAN_IMAGE_EXTENSIONS
+# vs _NON_SCAN_IMAGE_EXTENSIONS split) -- same pytesseract technique as the
+# PDF scanned-page path.
 # --------------------------------------------------------------------------
 
 
 def parse_image(path: str) -> list[Chunk]:
-    """OCR a standalone image file (jpg/png/etc). Mirrors the OCR fallback
-    used for scanned PDF pages: best-effort, never raises on missing
-    tesseract/empty result - just logs a warning and returns an empty chunk
-    list so the caller marks the file 'ready' with zero chunks instead of
-    'failed'.
+    """OCR a standalone scanned image file (tif/tiff only -- see
+    parse_file). Mirrors the OCR fallback used for scanned PDF pages:
+    best-effort, never raises on missing tesseract/empty result - just logs
+    a warning and returns an empty chunk list so the caller marks the file
+    'ready' with zero chunks instead of 'failed'.
     """
     if pytesseract is None or Image is None:
         logger.warning(
@@ -374,6 +463,19 @@ def parse_image(path: str) -> list[Chunk]:
     return chunks
 
 
+# Only these count as "a scan", worth running OCR on -- TIFF is
+# overwhelmingly a scanner/fax/archival output format, unlike a camera
+# photo or a screenshot (png/jpg/gif/bmp/webp), which almost never has
+# meaningful document text to recover via OCR. Those other formats are
+# treated as "just a picture" (see CONTRACTS.md "images"): the client no
+# longer routes them to /ingest at all (they go through the chat
+# image-attachment/vision flow instead), and a plain "image" file_type
+# (no specific extension, e.g. from an API caller that doesn't bother
+# naming one) is treated the same conservative way.
+_OCR_SCAN_IMAGE_EXTENSIONS = {"tif", "tiff"}
+_NON_SCAN_IMAGE_EXTENSIONS = {"image", "jpg", "jpeg", "png", "bmp", "gif", "webp"}
+
+
 def parse_file(file_type: str, path: str) -> list[Chunk]:
     """Extension hook: dispatch parsing by file_type, for the
     embedding/Milvus family of file types (pdf, docx, image).
@@ -388,8 +490,17 @@ def parse_file(file_type: str, path: str) -> list[Chunk]:
         return parse_pdf(path)
     if file_type == "docx":
         return parse_docx(path)
-    if file_type in ("image", "jpg", "jpeg", "png", "bmp", "tiff", "gif", "webp"):
+    if file_type in _OCR_SCAN_IMAGE_EXTENSIONS:
         return parse_image(path)
+    if file_type in _NON_SCAN_IMAGE_EXTENSIONS:
+        # Not a scan format -- OCR would almost never find real document
+        # text here. This endpoint shouldn't normally see these anymore
+        # (the client routes them to the chat-attachment flow instead),
+        # so this is just a defensive no-op for anything reaching /ingest
+        # directly anyway: "ready, 0 chunks", the same outcome OCR finding
+        # nothing already produces elsewhere in this module.
+        logger.info("file_type=%r is a non-scan image format; skipping OCR, 0 chunks", file_type)
+        return []
     raise NotImplementedError(
         f"parse_file: file_type='{file_type}' is not a supported embedding "
         "file type. pdf | docx | image are supported here; xlsx | csv | json "

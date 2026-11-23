@@ -39,7 +39,13 @@ celery_app.conf.update(
 
 
 @celery_app.task(name="summarization.summarize_file", bind=True)
-def summarize_file_task(self, file_id: str, thinking_level: str = "standard", question: str | None = None):
+def summarize_file_task(
+    self,
+    file_id: str,
+    thinking_level: str = "standard",
+    question: str | None = None,
+    system_prompt: str | None = None,
+):
     """Map-reduce summarize every Milvus chunk belonging to file_id.
 
     Steps:
@@ -78,7 +84,9 @@ def summarize_file_task(self, file_id: str, thinking_level: str = "standard", qu
     logger.info("summarize_file_task: file_id=%s, %d chunk(s) fetched from partition=%s",
                 file_id, len(chunks), partition_name)
 
-    summary = hierarchical_summarize(chunks, thinking_level=thinking_level, question=question)
+    summary = hierarchical_summarize(
+        chunks, thinking_level=thinking_level, question=question, system_prompt=system_prompt
+    )
 
     judge: dict[str, object] | None = None
     if thinking_level == "deep":
@@ -91,7 +99,11 @@ def summarize_file_task(self, file_id: str, thinking_level: str = "standard", qu
                 judge.get("reason"),
             )
             replan_summary = hierarchical_summarize(
-                chunks, thinking_level=thinking_level, question=question, extra_context=str(judge.get("reason") or "")
+                chunks,
+                thinking_level=thinking_level,
+                question=question,
+                extra_context=str(judge.get("reason") or ""),
+                system_prompt=system_prompt,
             )
             if replan_summary.strip():
                 summary = replan_summary

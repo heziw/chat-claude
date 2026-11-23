@@ -36,6 +36,10 @@ export interface Message {
   role: MessageRole;
   content: string;
   citations: Citation[];
+  /** Base64 data URLs of images attached to this message (general-chat
+   *  route only -- see shared/CONTRACTS.md "images"/"attachments").
+   *  Persisted server-side, so present on reload too (unlike `reasoning`). */
+  attachments?: string[];
   created_at: string;
   /** Client-side only, captured from the `reasoning` SSE event when this
    *  message was live-streamed (see ChatService.streamingReasoning /

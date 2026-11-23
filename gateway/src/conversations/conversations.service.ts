@@ -54,6 +54,18 @@ export class ConversationsService {
     return conversation;
   }
 
+  /** Updates the conversation's custom system_prompt (see
+   *  shared/CONTRACTS.md "system_prompt"). `null` clears it back to "no
+   *  custom instruction". Ownership must already be verified by the caller
+   *  (controller calls getOwned first, same pattern as `delete`). */
+  async updateSystemPrompt(conversationId: string, systemPrompt: string | null): Promise<ConversationEntity> {
+    const result = await this.db.query<ConversationEntity>(
+      `UPDATE conversations SET system_prompt = $1 OUTPUT INSERTED.* WHERE id = $2`,
+      [systemPrompt, conversationId],
+    );
+    return result.rows[0];
+  }
+
   async touchLastActive(conversationId: string): Promise<void> {
     await this.db.query(
       `UPDATE conversations SET last_active_at = SYSDATETIMEOFFSET() WHERE id = $1`,

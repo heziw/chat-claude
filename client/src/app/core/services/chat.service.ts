@@ -55,7 +55,8 @@ export class ChatService {
     question: string,
     history: ChatHistoryTurn[] = [],
     thinkingLevel: ThinkingLevel = 'standard',
-    callbacks: StreamQueryCallbacks = {}
+    callbacks: StreamQueryCallbacks = {},
+    images?: string[]
   ): Promise<void> {
     this.cancel(); // make sure no previous stream is still running
 
@@ -88,7 +89,8 @@ export class ChatService {
             conversation_id: conversationId,
             question,
             history,
-            thinking_level: thinkingLevel
+            thinking_level: thinkingLevel,
+            images: images?.length ? images : undefined
           }),
           signal: controller.signal
         }

@@ -16,6 +16,7 @@ import { Conversation, IndexStatus, Message, ReasoningInfo, UploadingFile } from
 export class ChatComponent implements OnInit, OnDestroy {
   @ViewChild('fileInput') fileInputRef?: ElementRef<HTMLInputElement>;
   @ViewChild('messagesEnd') messagesEndRef?: ElementRef<HTMLDivElement>;
+  @ViewChild('questionInput') questionInputRef?: ElementRef<HTMLTextAreaElement>;
 
   readonly conversationId = signal<string | null>(null);
   readonly conversation = signal<Conversation | null>(null);
@@ -30,6 +31,44 @@ export class ChatComponent implements OnInit, OnDestroy {
   /** User-selectable per question -- see shared/CONTRACTS.md "thinking_level".
    *  Persists across questions in this conversation view (not saved server-side). */
   readonly thinkingLevel = signal<ThinkingLevel>('standard');
+
+  // ---- Conversation system-prompt settings panel ----
+  readonly isSettingsOpen = signal(false);
+  readonly systemPromptDraft = signal('');
+  readonly isSavingSystemPrompt = signal(false);
+
+  // ---- Image attachments (general-chat multimodal input) ----
+  readonly attachedImages = signal<{ dataUrl: string; name: string }[]>([]);
+  readonly imageAttachError = signal<string | null>(null);
+  private static readonly MAX_IMAGES = 4;
+  private static readonly MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+  /** Extensions that go through the ingestion/RAG pipeline (📎 upload) --
+   *  everything else selected via the same picker that looks like an image
+   *  (image/* MIME) is routed to the chat-attachment/vision flow instead
+   *  (see shared/CONTRACTS.md "images"). tif/tiff count as documents here
+   *  because they're the one image format the backend still OCRs (scanner
+   *  output), unlike a camera photo or screenshot. */
+  private static readonly DOCUMENT_EXTENSIONS = new Set([
+    'pdf',
+    'docx',
+    'xlsx',
+    'csv',
+    'json',
+    'tif',
+    'tiff'
+  ]);
+
+  /** Built-in prompt templates for the "quick prompt" chips (see
+   *  shared/CONTRACTS.md -- these are plain client-side text snippets, not
+   *  a separate backend concept: clicking one just fills the composer, the
+   *  usual routing/file-selection logic then takes it from there). */
+  readonly quickPrompts: { label: string; text: string }[] = [
+    { label: '📝 סכם', text: 'סכם את הקובץ שהעלית' },
+    { label: '📊 נתח נתונים', text: 'נתח את הנתונים בקובץ וציין את הממצאים המרכזיים' },
+    { label: '🌐 תרגם לאנגלית', text: 'תרגם את תוכן הקובץ לאנגלית' },
+    { label: '🔑 נקודות מרכזיות', text: 'חלץ את נקודות המפתח העיקריות מהקובץ' }
+  ];
 
   /** Key = `${messageId}:${citationIndex}` of the currently expanded citation snippet. */
   readonly expandedCitationKey = signal<string | null>(null);
@@ -70,7 +109,10 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   private loadConversation(conversationId: string): void {
     this.conversationsService.get(conversationId).subscribe({
-      next: (conversation) => this.conversation.set(conversation),
+      next: (conversation) => {
+        this.conversation.set(conversation);
+        this.systemPromptDraft.set(conversation.system_prompt ?? '');
+      },
       error: () => {
         /* non-critical for the chat view itself */
       }
@@ -88,6 +130,10 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.loadError.set(null);
     this.uploadingFiles.set([]);
     this.expandedCitationKey.set(null);
+    this.isSettingsOpen.set(false);
+    this.systemPromptDraft.set('');
+    this.attachedImages.set([]);
+    this.imageAttachError.set(null);
     this.clearAllPolling();
     this.chatService.cancel();
   }
@@ -112,7 +158,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   sendQuestion(): void {
     const conversationId = this.conversationId();
     const question = this.questionText().trim();
-    if (!conversationId || !question || this.isStreaming()) return;
+    const images = this.attachedImages().map((img) => img.dataUrl);
+    if (!conversationId || (!question && images.length === 0) || this.isStreaming()) return;
 
     const userMessage: Message = {
       id: `local-${Date.now()}`,
@@ -120,32 +167,41 @@ export class ChatComponent implements OnInit, OnDestroy {
       role: 'user',
       content: question,
       citations: [],
+      attachments: images.length ? images : undefined,
       created_at: new Date().toISOString()
     };
     this.messages.update((list) => [...list, userMessage]);
     this.questionText.set('');
+    this.attachedImages.set([]);
     this.scrollToBottom();
 
     const history = this.buildHistory();
 
-    void this.chatService.sendQuery(conversationId, question, history, this.thinkingLevel(), {
-      onDone: (finalText, citations) => {
-        const assistantMessage: Message = {
-          id: `local-${Date.now()}-assistant`,
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: finalText,
-          citations,
-          created_at: new Date().toISOString(),
-          reasoning: this.chatService.streamingReasoning() ?? undefined
-        };
-        this.messages.update((list) => [...list, assistantMessage]);
-        this.scrollToBottom();
+    void this.chatService.sendQuery(
+      conversationId,
+      question,
+      history,
+      this.thinkingLevel(),
+      {
+        onDone: (finalText, citations) => {
+          const assistantMessage: Message = {
+            id: `local-${Date.now()}-assistant`,
+            conversation_id: conversationId,
+            role: 'assistant',
+            content: finalText,
+            citations,
+            created_at: new Date().toISOString(),
+            reasoning: this.chatService.streamingReasoning() ?? undefined
+          };
+          this.messages.update((list) => [...list, assistantMessage]);
+          this.scrollToBottom();
+        },
+        onError: () => {
+          this.scrollToBottom();
+        }
       },
-      onError: () => {
-        this.scrollToBottom();
-      }
-    });
+      images
+    );
   }
 
   private buildHistory(): ChatHistoryTurn[] {
@@ -192,6 +248,78 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
   }
 
+  // ---- Conversation settings (custom system prompt) --------------------
+
+  toggleSettings(): void {
+    this.isSettingsOpen.update((open) => {
+      if (!open) {
+        // Re-sync the draft from the loaded conversation each time the
+        // panel opens, in case it was saved from another tab/session.
+        this.systemPromptDraft.set(this.conversation()?.system_prompt ?? '');
+      }
+      return !open;
+    });
+  }
+
+  saveSystemPrompt(): void {
+    const conversationId = this.conversationId();
+    if (!conversationId || this.isSavingSystemPrompt()) return;
+
+    this.isSavingSystemPrompt.set(true);
+    const value = this.systemPromptDraft().trim() || null;
+    this.conversationsService.updateSystemPrompt(conversationId, value).subscribe({
+      next: (updated) => {
+        this.conversation.set(updated);
+        this.isSavingSystemPrompt.set(false);
+        this.isSettingsOpen.set(false);
+      },
+      error: () => {
+        this.isSavingSystemPrompt.set(false);
+      }
+    });
+  }
+
+  // ---- Quick prompt chips ------------------------------------------------
+
+  applyQuickPrompt(text: string): void {
+    this.questionText.update((current) => (current.trim() ? `${current}\n${text}` : text));
+    // Let the user immediately continue typing/editing before sending --
+    // these are templates to combine with (or send as-is), never auto-sent.
+    setTimeout(() => this.questionInputRef?.nativeElement.focus(), 0);
+  }
+
+  // ---- Image attachments (general-chat multimodal input) -----------------
+
+  removeAttachedImage(index: number): void {
+    this.attachedImages.update((list) => list.filter((_, i) => i !== index));
+  }
+
+  private handleImageFiles(files: File[]): void {
+    const remaining = ChatComponent.MAX_IMAGES - this.attachedImages().length;
+    if (remaining <= 0) {
+      this.imageAttachError.set(`ניתן לצרף עד ${ChatComponent.MAX_IMAGES} תמונות להודעה`);
+      return;
+    }
+
+    files.slice(0, remaining).forEach((file) => {
+      if (file.size > ChatComponent.MAX_IMAGE_BYTES) {
+        this.imageAttachError.set(`"${file.name}" גדולה מדי (מקסימום 4MB)`);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        this.attachedImages.update((list) => [
+          ...list,
+          { dataUrl: reader.result as string, name: file.name }
+        ]);
+      };
+      reader.onerror = () => {
+        this.imageAttachError.set(`קריאת "${file.name}" נכשלה`);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   // ---- File upload + drag & drop --------------------------------------------
 
   onDragOver(event: DragEvent): void {
@@ -221,8 +349,28 @@ export class ChatComponent implements OnInit, OnDestroy {
     input.value = '';
   }
 
+  /** Single entry point for the one "📎 attach" picker/drop-zone: routes
+   *  each selected file by extension -- document-like extensions (see
+   *  DOCUMENT_EXTENSIONS) go through the existing async ingestion/RAG
+   *  pipeline; any other image goes through the synchronous chat-attachment
+   *  (vision) flow instead; anything else is rejected with a clear error,
+   *  since there's no third pipeline for it. */
   private handleFiles(files: FileList): void {
-    Array.from(files).forEach((file) => this.uploadFile(file));
+    this.imageAttachError.set(null);
+    const imageFiles: File[] = [];
+
+    Array.from(files).forEach((file) => {
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+      if (ChatComponent.DOCUMENT_EXTENSIONS.has(ext)) {
+        this.uploadFile(file);
+      } else if (file.type.startsWith('image/')) {
+        imageFiles.push(file);
+      } else {
+        this.imageAttachError.set(`סוג הקובץ "${file.name}" אינו נתמך`);
+      }
+    });
+
+    if (imageFiles.length) this.handleImageFiles(imageFiles);
   }
 
   private uploadFile(file: File): void {

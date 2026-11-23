@@ -68,11 +68,15 @@ def _focus_text(question: str | None) -> str | None:
     return q
 
 
-def _map_instruction(question: str | None, extra_context: str | None) -> str:
+def _map_instruction(
+    question: str | None, extra_context: str | None, system_prompt: str | None = None
+) -> str:
     focus = _focus_text(question)
     instruction = _MAP_INSTRUCTION
     if focus:
         instruction += f", תוך התמקדות במענה על: {focus}"
+    if system_prompt:
+        instruction += f". הנחיה כללית נוספת מהמשתמש: {system_prompt}"
     if extra_context:
         instruction += f". הערה מניסיון קודם: {extra_context}"
     return instruction
@@ -138,11 +142,15 @@ def _group_texts(texts: list[str], max_count: int, max_chars: int) -> list[list[
 
 
 def _map_summarize(
-    chunk_texts: list[str], thinking_level: str, question: str | None, extra_context: str | None
+    chunk_texts: list[str],
+    thinking_level: str,
+    question: str | None,
+    extra_context: str | None,
+    system_prompt: str | None = None,
 ) -> list[str]:
     groups = _group_texts(chunk_texts, settings.MAP_GROUP_SIZE, settings.MAP_GROUP_MAX_CHARS)
     logger.info("Map stage: %d chunk(s) grouped into %d batch(es)", len(chunk_texts), len(groups))
-    instruction = _map_instruction(question, extra_context)
+    instruction = _map_instruction(question, extra_context, system_prompt)
     summaries = []
     for i, group in enumerate(groups):
         joined = "\n\n".join(group)
@@ -187,6 +195,7 @@ def hierarchical_summarize(
     thinking_level: str = "standard",
     question: str | None = None,
     extra_context: str | None = None,
+    system_prompt: str | None = None,
 ) -> str:
     """Full map-reduce pipeline over an ordered list of chunk dicts (each
     with at least a "text" key). Returns the single final summary string.
@@ -197,13 +206,15 @@ def hierarchical_summarize(
     stage is instructed to center on it instead of producing a generic
     summary. ``extra_context`` is only ever set by app/tasks.py's judge+
     replan re-run (the judge's stated reason for being unsatisfied with the
-    first attempt); it's appended to the map instruction too.
+    first attempt); it's appended to the map instruction too. ``system_prompt``
+    is the conversation's custom instruction (see CONTRACTS.md
+    "system_prompt"), also folded into the map instruction.
     """
     chunk_texts = [c["text"] for c in chunks if c.get("text")]
     if not chunk_texts:
         return ""
 
-    map_summaries = _map_summarize(chunk_texts, thinking_level, question, extra_context)
+    map_summaries = _map_summarize(chunk_texts, thinking_level, question, extra_context, system_prompt)
     final_summary = _reduce_summaries(map_summaries, depth=1, thinking_level=thinking_level)
     return final_summary
 

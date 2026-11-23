@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     VLLM_RERANK_URL: str = "http://localhost:9002/v1"
     VLLM_ROUTER_URL: str = "http://localhost:9003/v1"
     VLLM_VISION_URL: str = "http://localhost:9004/v1"
+    # Model name for the vision-capable model behind VLLM_VISION_URL, used
+    # to caption embedded images found on PDF pages that also have real
+    # extracted text (see app/vision.py, app/parsing.py's
+    # _caption_embedded_images). A separate deployment from
+    # VLLM_GENERATION_MODEL since there's no guarantee the main generation
+    # model is itself multimodal -- same reasoning as retrieval-
+    # orchestrator's identically-named setting.
+    VLLM_VISION_MODEL: str = "vision"
 
     # Chunking knobs
     CHUNK_SIZE_WORDS: int = 500

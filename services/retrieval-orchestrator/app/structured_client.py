@@ -21,16 +21,25 @@ class StructuredQueryError(Exception):
     rather than letting it crash the request."""
 
 
-def structured_query(file_id: str, question: str, thinking_level: str = "standard") -> dict[str, Any]:
+def structured_query(
+    file_id: str, question: str, thinking_level: str = "standard", system_prompt: str | None = None
+) -> dict[str, Any]:
     """POST /structured-query -> {answer, code_executed, result_table?, steps, judge?}.
 
     ``thinking_level`` ("fast"|"standard"|"deep") is forwarded as-is --
     structured-data-agent is the service that actually interprets it (higher
     reasoning_effort on its LLM calls, plus a judge+replan pass when
     "deep"). See CONTRACTS.md "thinking_level".
+
+    ``system_prompt`` -- the conversation's custom instruction (see
+    CONTRACTS.md "system_prompt"), folded into the plan-generation prompt
+    as a general instruction. Omitted from the payload entirely when unset
+    rather than sent as null, keeping request logs clean.
     """
     url = f"{settings.STRUCTURED_AGENT_URL.rstrip('/')}/structured-query"
-    payload = {"file_id": file_id, "question": question, "thinking_level": thinking_level}
+    payload: dict[str, Any] = {"file_id": file_id, "question": question, "thinking_level": thinking_level}
+    if system_prompt:
+        payload["system_prompt"] = system_prompt
     try:
         with httpx.Client(timeout=settings.HTTP_TIMEOUT_SECONDS) as client:
             resp = client.post(url, json=payload)
