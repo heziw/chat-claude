@@ -1,7 +1,7 @@
 # structured-data-agent: FastAPI, NL->pandas queries over the XLSX/CSV/JSON
 # parquet side-store (phase 1). See shared/CONTRACTS.md for API contracts
 # and env vars.
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 

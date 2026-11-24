@@ -1,6 +1,6 @@
 # ingestion-service: FastAPI + Celery worker, PDF ingestion (phase 1).
 # See shared/CONTRACTS.md for API contracts and env vars.
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # tesseract-ocr is installed as a base dependency for the OCR fallback path
 # (scanned PDF pages). heb+eng language packs cover current needs. No DB

@@ -1,7 +1,7 @@
 # summarization-service: FastAPI + Celery worker, hierarchical map-reduce
 # summarization over Milvus-indexed document chunks.
 # See shared/CONTRACTS.md for API contracts and env vars.
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
