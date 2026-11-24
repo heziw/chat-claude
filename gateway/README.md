@@ -73,7 +73,17 @@ so either a gateway-local `.env` or the shared repo-root one works.
 
 ## Running
 
+Requires **Node >=22** (`engines` in `package.json`) — `mssql@12`'s
+`tedious` dependency uses `Promise.withResolvers`, unavailable before
+Node 22. `infra/docker/gateway.Dockerfile` already targets `node:26-alpine`;
+for local dev on an older system Node, grab a standalone build instead of
+upgrading system-wide:
+
 ```bash
+curl -sL -o /tmp/node.tar.xz https://nodejs.org/dist/latest-v26.x/node-v26.13.1-linux-x64.tar.xz
+mkdir -p ~/.local/node && tar -xf /tmp/node.tar.xz -C ~/.local/node --strip-components=1
+export PATH="$HOME/.local/node/bin:$PATH"   # add to your shell profile
+
 npm install
 npm run build
 npm run start:dev   # or: npm run start (runs dist/main.js)
@@ -83,6 +93,27 @@ Requires MSSQL reachable via `MSSQL_HOST`/`MSSQL_PORT`/`MSSQL_DATABASE`/
 `MSSQL_USER`/`MSSQL_PASSWORD` (see repo-root `docker-compose.yml` for the
 local dev container) and, for full end-to-end flows, `ingestion-service` on
 `:8000` and `retrieval-orchestrator` on `:8001`.
+
+## Dependency pins worth knowing about
+
+- **`typescript` pinned to the exact `6.0.3`**, not a caret range: `@nestjs/
+  schematics@12` requires `typescript>=6.0.0`, while `@typescript-eslint/
+  eslint-plugin@8` caps it at `<6.1.0` — `6.0.x` is the only line satisfying
+  both, so a caret (`^6.0.3`) would let a future `6.1.0` release violate the
+  eslint plugin's peer range on a routine `npm install`.
+- **`tsconfig.json` sets `rootDir: "./src"` and no longer sets `baseUrl`**:
+  TypeScript 6 requires `rootDir` to be explicit when it can't unambiguously
+  infer one (`TS5011`); `baseUrl` was removed rather than suppressed
+  (`ignoreDeprecations`) since nothing in this project actually used it via
+  `paths` — it'll be a hard error in TypeScript 7 either way.
+- **`@nestjs/*` bumped 10 -> 12, `mssql` 10 -> 12, `multer` 1 -> 2**: all
+  three were the actual `npm audit` fix targets (NestJS's `body-parser`/
+  `file-type`/`@nestjs/config`'s `lodash`; mssql's `@azure/identity`/
+  `tedious`/`uuid`; multer's own CVEs). `@nestjs/platform-express@12` bundles
+  **Express 5** as a result — verified no wildcard route patterns or direct
+  `req.query` usage in this codebase that Express 5's breaking changes would
+  affect (NestJS's decorator-based routing abstracts over this for
+  everything actually used here).
 
 ## Endpoints
 

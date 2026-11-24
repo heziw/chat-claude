@@ -1,7 +1,7 @@
 # client: Angular SPA, built then served statically via nginx. apiBaseUrl
 # (see src/environments/environment.ts) should be overridden at build time
 # for a non-default gateway location -- see client/README.md "Env / config".
-FROM node:20-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY client/package*.json ./
 RUN npm ci
