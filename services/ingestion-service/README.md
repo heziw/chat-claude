@@ -150,8 +150,14 @@ Requires MSSQL, Redis, and Milvus reachable (see repo-root
 
 ## Dependency pins worth knowing about
 
-`requirements.txt` pins `setuptools<81` and `marshmallow==3.23.1` —
-`pymilvus==2.4.9` fails to import without them on a modern Python/pip
-(`pkg_resources` removal, `marshmallow 4.x` incompatibility). `redis>=6.1.0`
+`pymilvus==2.5.18` (bumped from `2.4.9`): `2.4.x` imports `pkg_resources`
+directly, which modern `setuptools` (>=81) no longer ships, forcing an old
+`setuptools<81` pin with known CVEs; `pymilvus>=2.5` dropped that import
+(and the `environs`/`marshmallow` dependency chain along with it), so
+`setuptools` and `marshmallow` can now both be left unpinned/latest. Client
+version was bumped independently of the pinned Milvus **server**
+(`docker-compose.yml`: `milvusdb/milvus:v2.4.9`) — verified against a live
+`v2.4.9` instance (connect/search/insert/query) before upgrading; see
+`shared/CONTRACTS.md` for the full dependency-audit note. `redis>=6.1.0`
 is required by Celery/kombu's Redis transport; the older pin that ships with
 some tutorials throws `VersionMismatch` at startup.

@@ -200,5 +200,6 @@ rather than crashing the request.
 
 ## Dependency pins worth knowing about
 
-Same `pymilvus==2.4.9` pins as ingestion-service (`setuptools<81`,
-`marshmallow==3.23.1`), plus `rank_bm25` for the BM25 stage.
+Same `pymilvus==2.5.18` (see ingestion-service's README for why it's no
+longer `2.4.9`+pinned-`setuptools`/`marshmallow`), plus `rank_bm25` for the
+BM25 stage.

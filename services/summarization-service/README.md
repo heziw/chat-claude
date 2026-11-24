@@ -106,6 +106,6 @@ already `ready` (ingested) in some conversation to summarize.
 
 ## Dependency pins worth knowing about
 
-Same `pymilvus==2.4.9` pins as ingestion-service (`setuptools<81`,
-`marshmallow==3.23.1`) and the same `redis>=6.1.0` requirement for
-Celery/kombu.
+Same `pymilvus==2.5.18` (see ingestion-service's README for why it's no
+longer `2.4.9`+pinned-`setuptools`/`marshmallow`) and the same
+`redis>=6.1.0` requirement for Celery/kombu.

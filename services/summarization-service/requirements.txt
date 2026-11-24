@@ -1,22 +1,21 @@
-# pymilvus imports pkg_resources directly; pin setuptools<81 since newer
-# releases are dropping pkg_resources. (Same fix as ingestion-service.)
-setuptools<81
-fastapi==0.115.6
+fastapi==0.165.0
 # Serves /docs and /redoc from bundled static assets instead of FastAPI's
 # CDN defaults (cdn.jsdelivr.net) -- this is an air-gapped system, so those
 # pages would otherwise render blank with no internet access. See
 # app/main.py's FastAPIOffline usage.
 fastapi-offline==1.7.7
-uvicorn[standard]==0.34.0
-celery==5.4.0
+uvicorn[standard]==0.54.0
+celery==5.7.0
 # redis>=6.1.0 required: older redis-py releases have a VersionMismatch
 # conflict with celery/kombu (discovered in ingestion-service).
 redis>=6.1.0
 python-tds==1.17.1
-pymilvus==2.4.9
-# pymilvus -> environs depends on marshmallow's __version_info__, which was
-# removed in marshmallow 4.x; pin to the last 3.x line to avoid breaking
-# pymilvus's import chain (same fix as ingestion-service).
-marshmallow==3.23.1
+# pymilvus>=2.5 dropped the environs/marshmallow dependency chain (and the
+# pkg_resources import that needed setuptools<81) entirely -- verified
+# against the pinned Milvus server (docker-compose.yml: milvusdb/milvus:v2.4.9)
+# before upgrading from 2.4.9; client/server version skew is fine for the
+# collection/search/insert operations this project actually uses.
+pymilvus==2.5.18
 httpx==0.28.1
-pydantic-settings==2.7.0
+pydantic-settings==2.16.3
+setuptools==84.2.1
