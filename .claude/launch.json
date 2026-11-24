@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "angular-client",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/home/hezi/claude/chat/client/npm-wrapper.sh",
       "runtimeArgs": ["run", "start", "--prefix", "client"],
       "port": 4200
     }

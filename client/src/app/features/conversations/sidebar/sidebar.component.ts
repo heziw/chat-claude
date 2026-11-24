@@ -1,15 +1,15 @@
-import { Component, OnInit, computed, signal } from '@angular/core';
+import { Component, OnInit, computed, signal, ChangeDetectionStrategy } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import { ConversationsService } from '../../../core/services/conversations.service';
 import { Conversation } from '../../../core/models';
 
 @Component({
-  selector: 'app-sidebar',
-  standalone: true,
-  imports: [RouterLink, RouterLinkActive],
-  templateUrl: './sidebar.component.html',
-  styleUrl: './sidebar.component.scss'
+    selector: 'app-sidebar',
+    imports: [RouterLink, RouterLinkActive],
+    templateUrl: './sidebar.component.html',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    styleUrl: './sidebar.component.scss'
 })
 export class SidebarComponent implements OnInit {
   readonly conversations = signal<Conversation[]>([]);

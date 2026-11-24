@@ -1,8 +1,46 @@
 # client
 
-Angular 18 SPA — the chat UI. Talks only to the `gateway` (never directly to
+Angular 22 SPA — the chat UI. Talks only to the `gateway` (never directly to
 the Python services or Milvus/MSSQL). See `/shared/CONTRACTS.md` for the
 full system contract. Dev server on `:4200`.
+
+## Running
+
+Requires **Node >=22.22.3** (Angular 22's floor). `infra/docker/
+client.Dockerfile` already targets `node:26-alpine`; for local dev on an
+older system Node, grab a standalone build instead of upgrading
+system-wide:
+
+```bash
+curl -sL -o /tmp/node.tar.xz https://nodejs.org/dist/latest-v26.x/node-v26.13.1-linux-x64.tar.xz
+mkdir -p ~/.local/node && tar -xf /tmp/node.tar.xz -C ~/.local/node --strip-components=1
+export PATH="$HOME/.local/node/bin:$PATH"   # add to your shell profile
+
+npm install
+npm start       # ng serve, :4200
+npm run build   # production build to dist/
+```
+
+`npm-wrapper.sh` exists only so the preview tooling's dev-server launcher
+(`.claude/launch.json`) picks up the portable Node above instead of
+whatever system Node it would otherwise resolve — irrelevant outside that
+tooling.
+
+## Dependency pins worth knowing about
+
+`@angular/*` was bumped 18 -> 22 (`npm audit` flagged 59 vulnerabilities —
+19 high, 2 critical — all tracing to `@angular/cli`/`@angular-devkit/
+build-angular` needing Angular 22) via `ng update` one major at a time
+(18->19->20->21->22, the officially supported path — skipping majors isn't
+safe, each version's migration schematics assume the previous one already
+ran). Every step's automated migration was reviewed by hand, not blindly
+accepted: the `standalone: true` -> implicit-default cleanup (19), the new
+explicit `ChangeDetectionStrategy.Eager` on every component (22, preserves
+exactly the previous implicit "Default" strategy's behavior under a new
+explicit name), and `provideHttpClient(withXhr(), ...)` (22, keeps the
+pre-existing `HttpXhrBackend`-based transport instead of silently switching
+to the new `fetch()`-based default). `typescript` landed on `~6.0.3` as a
+transitive requirement of this chain, same version gateway is pinned to.
 
 ## Architecture choices
 

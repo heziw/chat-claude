@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
   selector: 'app-empty-state',
@@ -8,6 +8,7 @@ import { Component } from '@angular/core';
       <p>בחר שיחה קיימת מהרשימה, או צור שיחה חדשה כדי להתחיל.</p>
     </div>
   `,
+  changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
     `
       .empty-state {

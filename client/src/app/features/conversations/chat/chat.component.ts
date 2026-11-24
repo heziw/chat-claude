@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, signal } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, signal, ChangeDetectionStrategy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NgTemplateOutlet } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
@@ -7,11 +7,11 @@ import { ChatHistoryTurn, ChatService, ThinkingLevel } from '../../../core/servi
 import { Conversation, IndexStatus, Message, ReasoningInfo, UploadingFile } from '../../../core/models';
 
 @Component({
-  selector: 'app-chat',
-  standalone: true,
-  imports: [FormsModule, NgTemplateOutlet],
-  templateUrl: './chat.component.html',
-  styleUrl: './chat.component.scss'
+    selector: 'app-chat',
+    imports: [FormsModule, NgTemplateOutlet],
+    templateUrl: './chat.component.html',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    styleUrl: './chat.component.scss'
 })
 export class ChatComponent implements OnInit, OnDestroy {
   @ViewChild('fileInput') fileInputRef?: ElementRef<HTMLInputElement>;
